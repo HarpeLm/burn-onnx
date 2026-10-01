@@ -37,6 +37,9 @@ readme = "README.md"
 version = "0.22.0-pre.4"
 
 [workspace.lints.clippy]
+# Clippy 1.99 reports the `field: field` initializers that `#[derive(new)]` (derive-new
+# 0.7.0) expands to, pointing at the struct's own field declarations.
+redundant_field_names = "allow"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
@@ -93,11 +96,11 @@ tempfile = "3.24.0"
 thiserror = { version = "2", default-features = false }
 toml = { version = "1.1.2", default-features = false, features = ["parse", "serde"] }
 
-burn = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "baf694340886cb7df1a8dd9b5ff280ae963ee937" }
-burn-flex = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "baf694340886cb7df1a8dd9b5ff280ae963ee937" }
-burn-pack = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "baf694340886cb7df1a8dd9b5ff280ae963ee937" }
-burn-store = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "baf694340886cb7df1a8dd9b5ff280ae963ee937" }
-burn-tensor = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "baf694340886cb7df1a8dd9b5ff280ae963ee937" }
+burn = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "91d892a4ad1e928866b1950b3f99e8a4061191e2" }
+burn-flex = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "91d892a4ad1e928866b1950b3f99e8a4061191e2" }
+burn-pack = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "91d892a4ad1e928866b1950b3f99e8a4061191e2" }
+burn-store = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "91d892a4ad1e928866b1950b3f99e8a4061191e2" }
+burn-tensor = { git = "https://github.com/tracel-ai/burn", default-features = false, rev = "91d892a4ad1e928866b1950b3f99e8a4061191e2" }
 
 ### For local development. ###
 # burn = { path = "../burn/crates/burn", default-features = false }
