@@ -288,6 +288,8 @@ impl NodeProcessor for SplitProcessor {
                         });
                     }
                 }
+                // A Shape is a 1D list of i64 values, like a 1D I64 tensor
+                ArgType::Shape(_) => {}
                 _ => {
                     return Err(ProcessError::TypeMismatch {
                         expected: "Tensor for split sizes input".to_string(),
@@ -899,5 +901,24 @@ mod tests {
             }
             other => panic!("Expected Tensor, got {:?}", other),
         }
+    }
+
+    /// Regression test for #344: split sizes given as a Shape input.
+    #[test]
+    fn test_split_sizes_as_shape_input() {
+        let node = TestNodeBuilder::new(NodeType::Split, "test_split")
+            .input_tensor_f32("input", 3, Some(vec![10, 20, 30]))
+            .input_shape_with_data("split", vec![3, 7])
+            .output_tensor_f32("output_0", 0, None)
+            .output_tensor_f32("output_1", 0, None)
+            .build_with_graph_data(16);
+
+        let processor = SplitProcessor;
+        let config = processor.extract_config(&node, 16).unwrap();
+
+        assert!(matches!(
+            &config.split_sizes,
+            Some(SplitSizesInput::Static(sizes)) if sizes == &vec![3, 7]
+        ));
     }
 }

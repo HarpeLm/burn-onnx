@@ -602,6 +602,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/split/split.onnx")
         .input("tests/split/split_axis1.onnx")
         .input("tests/split/split_runtime_sizes.onnx")
+        .input("tests/split/split_shape_sizes.onnx")
         .input("tests/split/split_uneven.onnx")
         .input("tests/split/split_zero_size.onnx")
         .input("tests/split_to_sequence/split_to_sequence.onnx")

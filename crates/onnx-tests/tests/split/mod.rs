@@ -4,6 +4,7 @@ include_models!(
     split_uneven,
     split_axis1,
     split_runtime_sizes,
+    split_shape_sizes,
     split_zero_size
 );
 
@@ -112,6 +113,26 @@ mod tests {
         let model = split_runtime_sizes::Model::new(&device);
         let input = || Tensor::<1>::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
         let sizes = |s: [i64; 2]| Tensor::<1, burn::tensor::Int>::from_ints(s, &device);
+
+        let (a, b) = model.forward(input(), sizes([2, 4]));
+        a.to_data()
+            .assert_eq(&TensorData::from([0.0f32, 1.0]), true);
+        b.to_data()
+            .assert_eq(&TensorData::from([2.0f32, 3.0, 4.0, 5.0]), true);
+
+        let (a, b) = model.forward(input(), sizes([5, 1]));
+        a.to_data()
+            .assert_eq(&TensorData::from([0.0f32, 1.0, 2.0, 3.0, 4.0]), true);
+        b.to_data().assert_eq(&TensorData::from([5.0f32]), true);
+    }
+
+    #[test]
+    fn split_shape_sizes() {
+        // Expected values from split_shape_sizes.py (onnx ReferenceEvaluator).
+        let device = Default::default();
+        let model = split_shape_sizes::Model::new(&device);
+        let input = || Tensor::<1>::from_floats([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], &device);
+        let sizes = |dims: [usize; 2]| Tensor::<2>::zeros(dims, &device);
 
         let (a, b) = model.forward(input(), sizes([2, 4]));
         a.to_data()
