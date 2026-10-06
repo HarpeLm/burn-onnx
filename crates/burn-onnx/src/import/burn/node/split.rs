@@ -54,8 +54,13 @@ impl NodeCodegen for onnx_ir::split::SplitNode {
                 }
                 // The output count is fixed by the graph; only the sizes wait for run time.
                 onnx_ir::split::SplitSizesInput::Runtime(runtime) => {
-                    let sizes = scope.arg(&self.inputs[runtime.input_index]);
-                    let to_vec = crate::burn::codegen::tensor_to_i64_vec(&sizes);
+                    let sizes_arg = &self.inputs[runtime.input_index];
+                    let sizes = scope.arg(sizes_arg);
+                    let to_vec = match &sizes_arg.ty {
+                        // A Shape is already a native [i64; N] array
+                        ArgType::Shape(_) => quote! { #sizes },
+                        _ => crate::burn::codegen::tensor_to_i64_vec(&sizes),
+                    };
                     slice_parts(quote! {
                         #to_vec.into_iter().map(|size| size as usize)
                     })
@@ -211,6 +216,47 @@ mod tests {
                     .convert::<i64>()
                     .try_into_vec::<i64>()
                     .unwrap()
+                    .into_iter()
+                    .map(|size| size as usize)
+                    .into_iter()
+                    .map(|size: usize| {
+                        let end = start + size;
+                        let part = input.clone().slice_dim(0, start..end);
+                        start = end;
+                        part
+                    })
+                    .collect::<alloc::vec::Vec<_>>()
+            };
+            let [output0, output1] = split_tensors.try_into().unwrap();
+            (output0, output1)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_split_runtime_shape_sizes() {
+        let config = SplitConfig {
+            axis: 0,
+            split_size: None,
+            split_sizes: Some(SplitSizesInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+                "split".to_string(),
+                1,
+            ))),
+            num_outputs: None,
+        };
+        let node = SplitNodeBuilder::new("split1")
+            .input_tensor("input", 1, DType::F32)
+            .input_shape("split", 2)
+            .output_tensor("output0", 1, DType::F32)
+            .output_tensor("output1", 1, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @"
+        pub fn forward(&self, input: Tensor<1>, split: [i64; 2]) -> (Tensor<1>, Tensor<1>) {
+            let split_tensors = {
+                let mut start = 0;
+                split
                     .into_iter()
                     .map(|size| size as usize)
                     .into_iter()

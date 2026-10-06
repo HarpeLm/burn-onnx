@@ -4854,12 +4854,10 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RotaryEmbedding (node 'rotaryembedding1')"
 
 [test_rotary_embedding_3d_input_expanded]
-status = "skip-compile"
-reason = "Split codegen calls to_data() on a runtime Shape ([i64; N]) used as split sizes"
+status = "pass"
 
 [test_rotary_embedding_expanded]
-status = "skip-compile"
-reason = "Split codegen calls to_data() on a runtime Shape ([i64; N]) used as split sizes"
+status = "pass"
 
 [test_rotary_embedding_interleaved]
 status = "skip-codegen"
@@ -4874,8 +4872,7 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RotaryEmbedding (node 'rotaryembedding1')"
 
 [test_rotary_embedding_no_position_ids_expanded]
-status = "skip-compile"
-reason = "Split codegen calls to_data() on a runtime Shape ([i64; N]) used as split sizes"
+status = "pass"
 
 [test_rotary_embedding_no_position_ids_interleaved]
 status = "skip-codegen"
@@ -4890,8 +4887,7 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RotaryEmbedding (node 'rotaryembedding1')"
 
 [test_rotary_embedding_no_position_ids_rotary_dim_expanded]
-status = "skip-compile"
-reason = "Split codegen calls to_data() on a runtime Shape ([i64; N]) used as split sizes"
+status = "pass"
 
 [test_rotary_embedding_with_interleaved_rotary_dim]
 status = "skip-codegen"
@@ -4906,8 +4902,7 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RotaryEmbedding (node 'rotaryembedding1')"
 
 [test_rotary_embedding_with_rotary_dim_expanded]
-status = "skip-compile"
-reason = "Split codegen calls to_data() on a runtime Shape ([i64; N]) used as split sizes"
+status = "pass"
 
 [test_round]
 status = "pass"
