@@ -45,6 +45,7 @@ fn main() {
 fn add_all_inputs(model_gen: &mut ModelGen) {
     model_gen
         .input("tests/abs/abs.onnx")
+        .input("tests/abs/abs_shape.onnx")
         .input("tests/acos/acos.onnx")
         .input("tests/acosh/acosh.onnx")
         .input("tests/add/add.onnx")
@@ -442,6 +443,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/mul/mul_shape_rank_lift.onnx")
         .input("tests/mul/mul_shape_tensor.onnx")
         .input("tests/neg/neg.onnx")
+        .input("tests/neg/neg_shape.onnx")
         .input("tests/non_max_suppression/non_max_suppression.onnx")
         .input("tests/non_max_suppression/non_max_suppression_minimal.onnx")
         .input("tests/non_max_suppression/non_max_suppression_missing_middle.onnx")
