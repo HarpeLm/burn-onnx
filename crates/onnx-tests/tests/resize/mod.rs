@@ -9,7 +9,9 @@ include_models!(
     resize_with_sizes,
     resize_with_shape,
     resize_with_sizes_tensor,
-    resize_with_scales_tensor
+    resize_with_scales_tensor,
+    resize_axes_static,
+    resize_axes_runtime
 );
 
 #[cfg(test)]
@@ -364,5 +366,46 @@ mod tests {
         let expected_sum = 4704.0f32;
 
         assert!(expected_sum.approx_eq(output_sum, (1.0e-4, 2)));
+    }
+
+    #[test]
+    fn resize_axes_static() {
+        // Expected values from resize_axes_static.py (onnx ReferenceEvaluator).
+        // axes=[3] with constant sizes [6]: only the width is resized.
+        let device = Default::default();
+        let model = resize_axes_static::Model::new(&device);
+        let input = Tensor::<4>::from_floats([[[[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]]], &device);
+
+        let output = model.forward(input);
+
+        output.to_data().assert_eq(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 1.0, 1.0, 2.0, 2.0],
+                [3.0, 3.0, 4.0, 4.0, 5.0, 5.0],
+            ]]]),
+            true,
+        );
+    }
+
+    #[test]
+    fn resize_axes_runtime() {
+        // Expected values from resize_axes_runtime.py (onnx ReferenceEvaluator).
+        // axes=[3, 2] with runtime scales [3.0, 2.0]: width x3, height x2.
+        let device = Default::default();
+        let model = resize_axes_runtime::Model::new(&device);
+        let input = Tensor::<4>::from_floats([[[[0.0, 1.0], [2.0, 3.0]]]], &device);
+        let scales = Tensor::<1>::from_floats([3.0, 2.0], &device);
+
+        let output = model.forward(input, scales);
+
+        output.to_data().assert_eq(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 0.0, 1.0, 1.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                [2.0, 2.0, 2.0, 3.0, 3.0, 3.0],
+                [2.0, 2.0, 2.0, 3.0, 3.0, 3.0],
+            ]]]),
+            true,
+        );
     }
 }
