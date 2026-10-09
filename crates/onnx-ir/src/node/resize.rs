@@ -573,6 +573,25 @@ impl NodeProcessor for ResizeProcessor {
         let scales = extract_scales_input(node, input.rank, axes.as_deref(), scales_idx)?;
         let sizes = extract_sizes_input(node, input, axes.as_deref(), sizes_idx)?;
 
+        if let Some(axes) = &axes {
+            // Resize only scales the spatial dims; the batch and channel dims are always kept
+            if let Some(axis) = axes.iter().find(|&&axis| axis < 2) {
+                return Err(ProcessError::InvalidAttribute {
+                    name: "axes".to_string(),
+                    reason: format!("resizing the batch or channel axis ({axis}) is not supported"),
+                });
+            }
+            // The runtime codegen reads the height and width of an NCHW input
+            let runtime = matches!(scales, Some(ResizeScales::Runtime(_)))
+                || matches!(sizes, Some(ResizeSizes::Runtime(_)));
+            if runtime && input.rank != 4 {
+                return Err(ProcessError::Custom(format!(
+                    "Resize: runtime scales/sizes with axes need a rank-4 input, got rank {}",
+                    input.rank
+                )));
+            }
+        }
+
         let mode = mode.ok_or_else(|| ProcessError::MissingAttribute("mode".to_string()))?;
 
         let config = ResizeConfig {
@@ -972,5 +991,27 @@ mod tests {
             let result = ResizeProcessor.extract_config(&node, 18);
             assert!(matches!(result, Err(ProcessError::InvalidAttribute { .. })));
         }
+    }
+
+    #[test]
+    fn test_resize_axes_non_spatial_rejected() {
+        // axes=[1] would resize the channel dim, which is not supported
+        let node = create_axes_node(vec![1], Some(vec![2.0]), None);
+        let result = ResizeProcessor.extract_config(&node, 18);
+        assert!(matches!(result, Err(ProcessError::InvalidAttribute { .. })));
+    }
+
+    #[test]
+    fn test_resize_axes_runtime_needs_rank_4() {
+        let node = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 3, None)
+            .output_tensor_f32("Y", 3, None)
+            .attr_string("mode", "nearest")
+            .attr_ints("axes", vec![2])
+            .input_tensor_f32("", 1, None)
+            .input_tensor_f32("scales", 1, None)
+            .build();
+        let result = ResizeProcessor.extract_config(&node, 18);
+        assert!(matches!(result, Err(ProcessError::Custom(_))));
     }
 }

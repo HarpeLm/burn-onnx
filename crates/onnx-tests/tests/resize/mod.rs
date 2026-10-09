@@ -373,7 +373,10 @@ mod tests {
         // Expected values from resize_axes_static.py (onnx ReferenceEvaluator).
         // axes=[3] with constant sizes [6]: only the width is resized.
         let device = Default::default();
-        let model = resize_axes_static::Model::new(&device);
+        let model = resize_axes_static::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/resize_axes_static.bpk"),
+            &device,
+        );
         let input = Tensor::<4>::from_floats([[[[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]]], &device);
 
         let output = model.forward(input);
@@ -392,7 +395,10 @@ mod tests {
         // Expected values from resize_axes_runtime.py (onnx ReferenceEvaluator).
         // axes=[3, 2] with runtime scales [3.0, 2.0]: width x3, height x2.
         let device = Default::default();
-        let model = resize_axes_runtime::Model::new(&device);
+        let model = resize_axes_runtime::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/resize_axes_runtime.bpk"),
+            &device,
+        );
         let input = Tensor::<4>::from_floats([[[[0.0, 1.0], [2.0, 3.0]]]], &device);
         let scales = Tensor::<1>::from_floats([3.0, 2.0], &device);
 
