@@ -1382,6 +1382,7 @@ fn resize(graph: &OnnxGraph) {
             exclude_outside: 0,
             extrapolation_value: 0.0,
             antialias: 0,
+            axes: None,
         }
     "#);
 }

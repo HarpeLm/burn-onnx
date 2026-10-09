@@ -4589,11 +4589,11 @@ tracking = "#546"
 
 [test_resize_downsample_sizes_nearest_not_larger]
 status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+reason = "Type inference failed: Node 'resize1' (Resize): Invalid attribute 'keep_aspect_ratio_policy': keep_aspect_ratio_policy other than 'stretch' is not supported"
 
 [test_resize_downsample_sizes_nearest_not_smaller]
 status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+reason = "Type inference failed: Node 'resize1' (Resize): Invalid attribute 'keep_aspect_ratio_policy': keep_aspect_ratio_policy other than 'stretch' is not supported"
 
 [test_resize_tf_crop_and_resize]
 status = "fail-compare"
@@ -4601,12 +4601,14 @@ reason = "resize op family comparison failure"
 tracking = "#546"
 
 [test_resize_tf_crop_and_resize_axes_2_3]
-status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+status = "fail-compare"
+reason = "tf_crop_and_resize coordinate mode and roi are not expressible with burn interpolate"
+tracking = "#546"
 
 [test_resize_tf_crop_and_resize_axes_3_2]
-status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+status = "fail-compare"
+reason = "tf_crop_and_resize coordinate mode and roi are not expressible with burn interpolate"
+tracking = "#546"
 
 [test_resize_tf_crop_and_resize_extrapolation_value]
 status = "skip-codegen"
@@ -4641,12 +4643,10 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'coordinate_transformation_
 status = "pass"
 
 [test_resize_upsample_scales_nearest_axes_2_3]
-status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+status = "pass"
 
 [test_resize_upsample_scales_nearest_axes_3_2]
-status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+status = "pass"
 
 [test_resize_upsample_sizes_cubic]
 status = "pass"
@@ -4655,12 +4655,10 @@ status = "pass"
 status = "pass"
 
 [test_resize_upsample_sizes_nearest_axes_2_3]
-status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+status = "pass"
 
 [test_resize_upsample_sizes_nearest_axes_3_2]
-status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+status = "pass"
 
 [test_resize_upsample_sizes_nearest_ceil_half_pixel]
 status = "fail-compare"
@@ -4674,11 +4672,11 @@ tracking = "#546"
 
 [test_resize_upsample_sizes_nearest_not_larger]
 status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+reason = "Type inference failed: Node 'resize1' (Resize): Invalid attribute 'keep_aspect_ratio_policy': keep_aspect_ratio_policy other than 'stretch' is not supported"
 
 [test_resize_upsample_sizes_nearest_not_smaller]
 status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+reason = "Type inference failed: Node 'resize1' (Resize): Invalid attribute 'keep_aspect_ratio_policy': keep_aspect_ratio_policy other than 'stretch' is not supported"
 
 [test_resize_upsample_sizes_nearest_round_prefer_ceil_asymmetric]
 status = "fail-compare"

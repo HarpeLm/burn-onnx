@@ -18,7 +18,7 @@ use onnx_ir_derive::NodeBuilder;
 use crate::ir::Argument;
 
 use crate::TensorDataExt;
-use crate::ir::{ArgType, Node, RawNode, RuntimeInputRef};
+use crate::ir::{ArgType, Node, RawNode, RuntimeInputRef, TensorType};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
 };
@@ -133,6 +133,10 @@ pub struct ResizeConfig {
     pub extrapolation_value: f32,
     /// Antialias flag (default: 0) - opset 13+
     pub antialias: i32,
+    /// Axes that the scales/sizes values apply to (`axes` attribute, opset 18+),
+    /// normalized to non-negative indices. Static scales/sizes are already expanded to
+    /// every axis, so only runtime values are laid out in this order.
+    pub axes: Option<Vec<usize>>,
 }
 
 impl Default for ResizeConfig {
@@ -147,6 +151,7 @@ impl Default for ResizeConfig {
             exclude_outside: 0,
             extrapolation_value: 0.0,
             antialias: 0,
+            axes: None,
         }
     }
 }
@@ -194,6 +199,7 @@ pub struct ResizeNode {
 fn extract_scales_input(
     node: &RawNode,
     input_rank: usize,
+    axes: Option<&[usize]>,
     idx: usize,
 ) -> Result<Option<ResizeScales>, ProcessError> {
     let Some(input) = node.inputs.get(idx) else {
@@ -218,12 +224,18 @@ fn extract_scales_input(
                     if scales.is_empty() {
                         return Ok(None);
                     }
-                    if scales.len() != input_rank {
+                    let expected = axes.map_or(input_rank, <[usize]>::len);
+                    if scales.len() != expected {
                         return Err(ProcessError::Custom(format!(
-                            "Resize: scales has {} values, input has rank {input_rank}",
+                            "Resize: scales has {} values, expected {expected}",
                             scales.len()
                         )));
                     }
+                    // Unlisted axes keep their size (scale 1.0)
+                    let scales = match axes {
+                        Some(axes) => expand_axes_to_full(&scales, axes, &vec![1.0; input_rank]),
+                        None => scales,
+                    };
                     // ignore the first two items from scales
                     // because they are the batch and channel dimensions
                     Ok(Some(ResizeScales::Static(scales[2..].to_vec())))
@@ -242,23 +254,25 @@ fn extract_scales_input(
 /// Extract sizes input as either static or runtime
 fn extract_sizes_input(
     node: &RawNode,
-    input_rank: usize,
+    input: &TensorType,
+    axes: Option<&[usize]>,
     idx: usize,
 ) -> Result<Option<ResizeSizes>, ProcessError> {
-    let Some(input) = node.inputs.get(idx) else {
+    let input_rank = input.rank;
+    let Some(sizes_input) = node.inputs.get(idx) else {
         return Ok(None);
     };
     // Skip optional inputs (those that were never provided)
-    if input.is_optional() {
+    if sizes_input.is_optional() {
         return Ok(None);
     }
 
-    match &input.ty {
+    match &sizes_input.ty {
         // A Shape input has a value too once simplification folds it to a constant,
         // and constant lifting then clears its name, so it must not become Runtime.
         ArgType::Tensor(_) | ArgType::Shape(_) => {
             // Check if it's a static value (lifted constant) or constant
-            match input.value() {
+            match sizes_input.value() {
                 Some(tensor_data) => {
                     let i64_sizes: Vec<i64> = tensor_data.try_into_vec().map_err(|e| {
                         ProcessError::Custom(format!("Resize: cannot read sizes: {e:?}"))
@@ -266,12 +280,36 @@ fn extract_sizes_input(
                     if i64_sizes.is_empty() {
                         return Ok(None);
                     }
-                    if i64_sizes.len() != input_rank {
+                    let expected = axes.map_or(input_rank, <[usize]>::len);
+                    if i64_sizes.len() != expected {
                         return Err(ProcessError::Custom(format!(
-                            "Resize: sizes has {} values, input has rank {input_rank}",
+                            "Resize: sizes has {} values, expected {expected}",
                             i64_sizes.len()
                         )));
                     }
+                    // Unlisted axes keep their input size, which must be known statically.
+                    // Batch and channel (axes 0 and 1) are dropped below, so any value works.
+                    let i64_sizes = match axes {
+                        Some(axes) => {
+                            let mut unchanged = vec![0i64; input_rank];
+                            for (dim, size) in unchanged.iter_mut().enumerate().skip(2) {
+                                if axes.contains(&dim) {
+                                    continue;
+                                }
+                                let known = input
+                                    .static_shape
+                                    .as_ref()
+                                    .and_then(|shape| shape.get(dim).copied().flatten());
+                                *size = known.ok_or_else(|| {
+                                    ProcessError::Custom(format!(
+                                        "Resize: sizes with axes {axes:?} needs the static size of axis {dim}"
+                                    ))
+                                })? as i64;
+                            }
+                            expand_axes_to_full(&i64_sizes, axes, &unchanged)
+                        }
+                        None => i64_sizes,
+                    };
                     // ignore the first two items from sizes
                     // because they are the batch and channel dimensions
                     let sizes = i64_sizes[2..]
@@ -287,13 +325,46 @@ fn extract_sizes_input(
                 }
                 // Runtime input - store reference instead of cloning the argument
                 None => Ok(Some(ResizeSizes::Runtime(RuntimeInputRef::new(
-                    input.name.clone(),
+                    sizes_input.name.clone(),
                     idx,
                 )))),
             }
         }
         _ => Ok(None),
     }
+}
+
+/// Place per-axis `values` at their `axes`, starting from `full` (one value per input axis).
+fn expand_axes_to_full<T: Copy>(values: &[T], axes: &[usize], full: &[T]) -> Vec<T> {
+    let mut full = full.to_vec();
+    for (&axis, &value) in axes.iter().zip(values) {
+        full[axis] = value;
+    }
+    full
+}
+
+/// Normalize the `axes` attribute: negative axes count from the end, and every axis
+/// must be in range and appear only once.
+fn normalize_axes(axes: &[i64], rank: usize) -> Result<Vec<usize>, ProcessError> {
+    let mut normalized = Vec::with_capacity(axes.len());
+    for &axis in axes {
+        let resolved = if axis < 0 { axis + rank as i64 } else { axis };
+        if resolved < 0 || resolved >= rank as i64 {
+            return Err(ProcessError::InvalidAttribute {
+                name: "axes".to_string(),
+                reason: format!("axis {axis} is out of range for rank {rank}"),
+            });
+        }
+        let resolved = resolved as usize;
+        if normalized.contains(&resolved) {
+            return Err(ProcessError::InvalidAttribute {
+                name: "axes".to_string(),
+                reason: format!("axis {axis} appears more than once"),
+            });
+        }
+        normalized.push(resolved);
+    }
+    Ok(normalized)
 }
 
 pub(crate) struct ResizeProcessor;
@@ -343,13 +414,7 @@ impl NodeProcessor for ResizeProcessor {
                         reason: "antialias other than 0 is not supported".to_string(),
                     });
                 }
-                "axes" => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: "axes".to_string(),
-                        reason: "custom axes attribute is not supported".to_string(),
-                    });
-                }
-                "coordinate_transformation_mode" | "cubic_coeff_a" => {
+                "axes" | "coordinate_transformation_mode" | "cubic_coeff_a" => {
                     // Parsed in extract_config
                 }
                 "exclude_outside" if value.clone().into_i32()? != 0 => {
@@ -432,6 +497,7 @@ impl NodeProcessor for ResizeProcessor {
         let mut exclude_outside = 0i32;
         let mut extrapolation_value = 0.0f32;
         let mut antialias = 0i32;
+        let mut axes_attr: Option<Vec<i64>> = None;
 
         let input = if let ArgType::Tensor(tensor) = &node
             .inputs
@@ -489,6 +555,9 @@ impl NodeProcessor for ResizeProcessor {
                 "antialias" => {
                     antialias = value.clone().into_i32()?;
                 }
+                "axes" => {
+                    axes_attr = Some(value.clone().into_i64s()?);
+                }
                 _ => {}
             }
         }
@@ -497,8 +566,31 @@ impl NodeProcessor for ResizeProcessor {
         // Opset 11+: inputs are [X, roi, scales, sizes]
         let (scales_idx, sizes_idx) = if opset < 11 { (1, usize::MAX) } else { (2, 3) };
 
-        let scales = extract_scales_input(node, input.rank, scales_idx)?;
-        let sizes = extract_sizes_input(node, input.rank, sizes_idx)?;
+        let axes = axes_attr
+            .map(|axes| normalize_axes(&axes, input.rank))
+            .transpose()?;
+
+        let scales = extract_scales_input(node, input.rank, axes.as_deref(), scales_idx)?;
+        let sizes = extract_sizes_input(node, input, axes.as_deref(), sizes_idx)?;
+
+        if let Some(axes) = &axes {
+            // Resize only scales the spatial dims; the batch and channel dims are always kept
+            if let Some(axis) = axes.iter().find(|&&axis| axis < 2) {
+                return Err(ProcessError::InvalidAttribute {
+                    name: "axes".to_string(),
+                    reason: format!("resizing the batch or channel axis ({axis}) is not supported"),
+                });
+            }
+            // The runtime codegen reads the height and width of an NCHW input
+            let runtime = matches!(scales, Some(ResizeScales::Runtime(_)))
+                || matches!(sizes, Some(ResizeSizes::Runtime(_)));
+            if runtime && input.rank != 4 {
+                return Err(ProcessError::Custom(format!(
+                    "Resize: runtime scales/sizes with axes need a rank-4 input, got rank {}",
+                    input.rank
+                )));
+            }
+        }
 
         let mode = mode.ok_or_else(|| ProcessError::MissingAttribute("mode".to_string()))?;
 
@@ -512,6 +604,7 @@ impl NodeProcessor for ResizeProcessor {
             exclude_outside,
             extrapolation_value,
             antialias,
+            axes,
         };
         Ok(config)
     }
@@ -789,5 +882,136 @@ mod tests {
             config.coordinate_transformation_mode,
             CoordinateTransformMode::Asymmetric
         );
+    }
+
+    /// Resize node with the `axes` attribute, a static input shape and either
+    /// constant scales or constant sizes for the listed axes.
+    fn create_axes_node(
+        axes: Vec<i64>,
+        scales: Option<Vec<f32>>,
+        sizes: Option<Vec<i64>>,
+    ) -> RawNode {
+        let mut builder = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 4, Some(vec![1, 1, 2, 4]))
+            .output_tensor_f32("Y", 4, None)
+            .attr_string("mode", "nearest")
+            .attr_ints("axes", axes)
+            .input_tensor_f32("", 1, None);
+        builder = match scales {
+            Some(data) => {
+                let len = data.len();
+                builder.input_tensor_f32_data("scales", data, vec![len])
+            }
+            None => builder.input_tensor_f32("", 1, None),
+        };
+        if let Some(data) = sizes {
+            let len = data.len();
+            builder = builder.input_tensor_i64_data("sizes", data, vec![len]);
+        }
+        builder.build_with_graph_data(18)
+    }
+
+    #[test]
+    fn test_resize_axes_static_scales_reordered() {
+        // axes=[3, 2]: the first scale is for the width, the second for the height
+        let node = create_axes_node(vec![3, 2], Some(vec![3.0, 2.0]), None);
+        let config = ResizeProcessor.extract_config(&node, 18).unwrap();
+        match &config.scales {
+            Some(ResizeScales::Static(scales)) => assert_eq!(*scales, vec![2.0, 3.0]),
+            other => panic!("Expected static scales, got {other:?}"),
+        }
+        assert_eq!(config.axes, Some(vec![3, 2]));
+    }
+
+    #[test]
+    fn test_resize_axes_static_scales_unlisted_axis_unchanged() {
+        // Only the width is resized; the height keeps scale 1.0
+        let node = create_axes_node(vec![-1], Some(vec![2.0]), None);
+        let config = ResizeProcessor.extract_config(&node, 18).unwrap();
+        match &config.scales {
+            Some(ResizeScales::Static(scales)) => assert_eq!(*scales, vec![1.0, 2.0]),
+            other => panic!("Expected static scales, got {other:?}"),
+        }
+        assert_eq!(config.axes, Some(vec![3]));
+    }
+
+    #[test]
+    fn test_resize_axes_static_sizes_unlisted_axis_unchanged() {
+        // Only the height is resized; the width keeps its static input size (4)
+        let node = create_axes_node(vec![2], None, Some(vec![6]));
+        let config = ResizeProcessor.extract_config(&node, 18).unwrap();
+        match &config.sizes {
+            Some(ResizeSizes::Static(sizes)) => assert_eq!(*sizes, vec![6, 4]),
+            other => panic!("Expected static sizes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_resize_axes_static_sizes_need_static_shape() {
+        // Without a static input shape, the unlisted width has no known size
+        let node = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 4, None)
+            .output_tensor_f32("Y", 4, None)
+            .attr_string("mode", "nearest")
+            .attr_ints("axes", vec![2])
+            .input_tensor_f32("", 1, None)
+            .input_tensor_f32("", 1, None)
+            .input_tensor_i64_data("sizes", vec![6], vec![1])
+            .build_with_graph_data(18);
+        let result = ResizeProcessor.extract_config(&node, 18);
+        assert!(matches!(result, Err(ProcessError::Custom(_))));
+    }
+
+    #[test]
+    fn test_resize_axes_runtime_scales_keep_axes() {
+        let node = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 4, None)
+            .output_tensor_f32("Y", 4, None)
+            .attr_string("mode", "nearest")
+            .attr_ints("axes", vec![3, 2])
+            .input_tensor_f32("", 1, None)
+            .input_tensor_f32("scales", 1, None)
+            .build();
+        let config = ResizeProcessor.extract_config(&node, 18).unwrap();
+        assert!(matches!(&config.scales, Some(ResizeScales::Runtime(r)) if r.name == "scales"));
+        assert_eq!(config.axes, Some(vec![3, 2]));
+    }
+
+    #[test]
+    fn test_resize_axes_wrong_value_count() {
+        let node = create_axes_node(vec![2, 3], Some(vec![2.0]), None);
+        let result = ResizeProcessor.extract_config(&node, 18);
+        assert!(matches!(result, Err(ProcessError::Custom(_))));
+    }
+
+    #[test]
+    fn test_resize_axes_invalid() {
+        for axes in [vec![4], vec![2, -2]] {
+            let node = create_axes_node(axes, Some(vec![2.0, 2.0]), None);
+            let result = ResizeProcessor.extract_config(&node, 18);
+            assert!(matches!(result, Err(ProcessError::InvalidAttribute { .. })));
+        }
+    }
+
+    #[test]
+    fn test_resize_axes_non_spatial_rejected() {
+        // axes=[1] would resize the channel dim, which is not supported
+        let node = create_axes_node(vec![1], Some(vec![2.0]), None);
+        let result = ResizeProcessor.extract_config(&node, 18);
+        assert!(matches!(result, Err(ProcessError::InvalidAttribute { .. })));
+    }
+
+    #[test]
+    fn test_resize_axes_runtime_needs_rank_4() {
+        let node = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 3, None)
+            .output_tensor_f32("Y", 3, None)
+            .attr_string("mode", "nearest")
+            .attr_ints("axes", vec![2])
+            .input_tensor_f32("", 1, None)
+            .input_tensor_f32("scales", 1, None)
+            .build();
+        let result = ResizeProcessor.extract_config(&node, 18);
+        assert!(matches!(result, Err(ProcessError::Custom(_))));
     }
 }
