@@ -29,7 +29,9 @@ include_simplified_models!(
     simplify_reshape_concat_shape,
     simplify_resize_sizes_from_shape,
     simplify_pool_output_dims,
-    simplify_reshape_symbolic_dims
+    simplify_reshape_symbolic_dims,
+    simplify_pad_from_constants,
+    simplify_ones_times_minus_one
 );
 
 /// Extract the `forward` method body from generated source code.
@@ -854,6 +856,63 @@ mod tests {
             ],
         ]]);
         out.to_data().assert_eq(&expected, false);
+        assert_eq!(out.to_data(), u.forward(input).to_data());
+    }
+
+    #[test]
+    fn pad_from_constants() {
+        let device = Default::default();
+        // `Model::default()` loads constants from the bpk; `new` would zero them.
+        let s = simplified::simplify_pad_from_constants::Model::default();
+        let u = unsimplified::simplify_pad_from_constants::Model::default();
+        let input = Tensor::<3>::from_floats(
+            [[[0., 1., 2.], [3., 4., 5.], [6., 7., 8.], [9., 10., 11.]]],
+            &device,
+        );
+        let out = s.forward(input.clone());
+        // F.pad(x, (0, 1)), from ReferenceEvaluator
+        let expected = TensorData::from([[
+            [0f32, 1., 2., 0.],
+            [3., 4., 5., 0.],
+            [6., 7., 8., 0.],
+            [9., 10., 11., 0.],
+        ]]);
+        out.to_data().assert_eq(&expected, false);
+        assert_eq!(out.to_data(), u.forward(input).to_data());
+    }
+
+    #[test]
+    fn codegen_pad_from_constants() {
+        let s = simplified_source::simplify_pad_from_constants();
+        let u = unsimplified_source::simplify_pad_from_constants();
+        assert_codegen_differs(s, u, "pad_from_constants");
+        // The pads chain folds to a constant, so Pad takes static amounts with no readback
+        insta::assert_snapshot!(extract_forward(s), @r"
+        pub fn forward(&self, x: Tensor<3>) -> Tensor<3> {
+                let pad1_out1 = x
+                    .pad(
+                        [(0usize, 0usize), (0usize, 0usize), (0usize, 1usize)],
+                        burn::tensor::ops::PadMode::Constant(0f32),
+                    );
+                pad1_out1
+            }
+        }
+        ");
+    }
+
+    #[test]
+    fn ones_times_minus_one() {
+        let device = Default::default();
+        // `Model::default()` loads constants from the bpk; `new` would zero them.
+        let s = simplified::simplify_ones_times_minus_one::Model::default();
+        let u = unsimplified::simplify_ones_times_minus_one::Model::default();
+        let input = Tensor::<1, Int>::from_data(
+            TensorData::from([2i64, -1, 5]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let out = s.forward(input.clone());
+        out.to_data()
+            .assert_eq(&TensorData::from([2i64, 1, 5]), false);
         assert_eq!(out.to_data(), u.forward(input).to_data());
     }
 
