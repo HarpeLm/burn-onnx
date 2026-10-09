@@ -1781,20 +1781,16 @@ status = "pass"
 status = "pass"
 
 [test_compress_0]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): Compress (node 'compress1')"
+status = "pass"
 
 [test_compress_1]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): Compress (node 'compress1')"
+status = "pass"
 
 [test_compress_default_axis]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): Compress (node 'compress1')"
+status = "pass"
 
 [test_compress_negative_axis]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): Compress (node 'compress1')"
+status = "pass"
 
 [test_concat_1d_axis_0]
 status = "pass"

@@ -579,6 +579,10 @@ impl ProcessorRegistry {
             NodeType::NonZero,
             Box::new(crate::node::nonzero::NonZeroProcessor),
         );
+        registry.register(
+            NodeType::Compress,
+            Box::new(crate::node::compress::CompressProcessor),
+        );
 
         // ArgMax/ArgMin/TopK
         registry.register(

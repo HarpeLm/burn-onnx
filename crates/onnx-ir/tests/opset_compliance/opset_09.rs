@@ -87,6 +87,25 @@ fn cast(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn compress(graph: &OnnxGraph) {
+    let node = find_node(graph, "compress");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Compress "compress1"
+      Inputs:
+        compress_input: F32[3, 2]
+        compress_condition: Bool(Native)[?]
+      Outputs:
+        compress1_out1: F32[?, 2]
+      Config:
+        CompressConfig {
+            axis: Some(
+                0,
+            ),
+        }
+    "#);
+}
+
+#[rstest]
 fn constant(graph: &OnnxGraph) {
     let node = find_graph_output_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"

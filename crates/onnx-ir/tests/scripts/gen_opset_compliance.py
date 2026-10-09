@@ -206,6 +206,7 @@ SUPPORTED_OPS = {
     "DequantizeLinear": "dequantize_linear",
     "Where": "where_op_gen",
     "NonZero": "nonzero",
+    "Compress": "compress",
     "Constant": "constant",
     "ConstantOfShape": "constant_of_shape",
     "OneHot": "onehot",
@@ -811,6 +812,20 @@ def make_nonzero(op_name: str, opset: int):
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.INT64, None)
     node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"))
     return [node], [inp], [out], []
+
+
+def make_compress(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [3, 2])
+    cond = helper.make_tensor_value_info(_p(op_name, "condition"), TensorProto.BOOL, [None])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [None, 2])
+    node = helper.make_node(
+        op_name,
+        [_p(op_name, "input"), _p(op_name, "condition")],
+        [_p(op_name, "output")],
+        name=_p(op_name, "node"),
+        axis=0,
+    )
+    return [node], [inp, cond], [out], []
 
 
 def make_constant(op_name: str, opset: int):
@@ -1467,6 +1482,7 @@ GENERATORS = {
     "cast": make_cast,
     "where_op_gen": make_where_op_gen,
     "nonzero": make_nonzero,
+    "compress": make_compress,
     "constant": make_constant,
     "constant_of_shape": make_constant_of_shape,
     "onehot": make_onehot,

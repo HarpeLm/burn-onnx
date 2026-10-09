@@ -44,7 +44,7 @@ as `com.microsoft`, can still be imported by registering a custom op hook; see
 | [CenterCropPad][26]              | ❌             | ❌           |
 | [Clip][27]                       | ✅             | ✅           |
 | [Col2Im][28]                     | ✅             | ✅           |
-| [Compress][29]                   | ❌             | ❌           |
+| [Compress][29]                   | ✅             | ✅           |
 | [Concat][30]                     | ✅             | ✅           |
 | [ConcatFromSequence][31]         | ❌             | ❌           |
 | [Constant][32]                   | ✅             | ✅           |

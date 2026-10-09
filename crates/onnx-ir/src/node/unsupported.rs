@@ -44,7 +44,6 @@ define_placeholder_node! {
     AffineGridNode,
     AveragePoolNode,
     CenterCropPadNode,
-    CompressNode,
     ConcatFromSequenceNode,
     ConvNode,
     ConvIntegerNode,

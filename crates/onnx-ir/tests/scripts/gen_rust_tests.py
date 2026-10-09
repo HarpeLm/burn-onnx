@@ -169,6 +169,7 @@ MIN_OPSET = {
     "DequantizeLinear": 10,
     "Where": 9,
     "NonZero": 9,
+    "Compress": 9,
     "Constant": 1,
     "ConstantOfShape": 9,
     "OneHot": 9,

@@ -334,6 +334,7 @@ impl_node_codegen_dispatch! {
     ArgMin,
     TopK,
     NonZero,
+    Compress,
     OneHot,
     Pow,
     Mod,

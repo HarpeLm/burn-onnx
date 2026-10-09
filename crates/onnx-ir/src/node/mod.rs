@@ -70,6 +70,7 @@ pub mod cast_like;
 pub mod clip;
 pub mod col2im;
 pub mod comparison;
+pub mod compress;
 pub mod concat;
 pub mod constant;
 pub mod constant_of_shape;
