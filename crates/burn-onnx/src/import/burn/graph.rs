@@ -427,6 +427,7 @@ impl BurnGraph {
 
             // Generate forward() body
             let input_params = crate::burn::codegen_fn_params(chunk_inputs);
+            let maybe_args_doc = crate::burn::codegen_args_doc(chunk_inputs);
             let output_type = crate::burn::codegen_return_type(chunk_outputs);
             let output_return = crate::burn::codegen_return_expr(chunk_outputs);
 
@@ -460,6 +461,7 @@ impl BurnGraph {
                     }
 
                     #[allow(clippy::let_and_return, clippy::approx_constant)]
+                    #maybe_args_doc
                     pub fn forward(&self, #input_params) -> #output_type {
                         #forward_body
                         #output_return
@@ -506,6 +508,7 @@ impl BurnGraph {
 
         // Top-level Model forward signature
         let input_def = crate::burn::codegen_fn_params(&self.graph_input_args);
+        let args_doc = crate::burn::codegen_args_doc(&self.graph_input_args);
         let output_type_def = crate::burn::codegen_return_type(&self.graph_output_args);
         let output_return_def = crate::burn::codegen_return_expr(&self.graph_output_args);
 
@@ -569,6 +572,7 @@ impl BurnGraph {
                 #maybe_blank
 
                 #[allow(clippy::let_and_return, clippy::approx_constant)]
+                #args_doc
                 pub fn forward(&self, #input_def) -> #output_type_def {
                     #input_conversions
                     #(#forward_calls)*
@@ -811,6 +815,7 @@ impl BurnGraph {
 
     fn codegen_forward(&mut self) -> TokenStream {
         let input_def = crate::burn::codegen_fn_params(&self.graph_input_args);
+        let args_doc = crate::burn::codegen_args_doc(&self.graph_input_args);
         let output_type_def = crate::burn::codegen_return_type(&self.graph_output_args);
         let output_return_def = crate::burn::codegen_return_expr(&self.graph_output_args);
 
@@ -839,6 +844,7 @@ impl BurnGraph {
         // For now, we just disable the warning.
         quote! {
             #[allow(clippy::let_and_return, clippy::approx_constant)]
+            #args_doc
             pub fn forward(&self, #input_def) -> #output_type_def {
                 #input_conversions
                 #body
@@ -1929,6 +1935,52 @@ mod tests {
 
         // The Model forward should still take `input` and return the final tensor
         assert!(code.contains("pub fn forward(&self, input: Tensor<2>) -> Tensor<2>"));
+    }
+
+    #[test]
+    fn flat_forward_documents_input_dtypes() {
+        let graph = build_abs_chain(1);
+        let code = format_tokens(graph.codegen());
+
+        insta::assert_snapshot!(code, @r"
+        extern crate alloc;
+        use burn::prelude::*;
+        #[derive(Module, Debug)]
+        pub struct Model {
+            #[module(skip)]
+            device: Device,
+        }
+        impl Model {
+            #[allow(unused_variables)]
+            pub fn new(device: &Device) -> Self {
+                Self { device: device.clone() }
+            }
+            #[allow(clippy::let_and_return, clippy::approx_constant)]
+            /// # Arguments
+            /// - `input`: expected dtype `DType::F32`
+            pub fn forward(&self, input: Tensor<2>) -> Tensor<2> {
+                let t0 = input.abs();
+                t0
+            }
+        }
+        ");
+    }
+
+    #[test]
+    fn partitioned_forwards_document_input_dtypes() {
+        let graph = build_abs_chain(250);
+        let code = format_tokens(graph.codegen());
+
+        let doc = "/// # Arguments\n    /// - `input`: expected dtype `DType::F32`\n    pub fn forward(&self, input: Tensor<2>)";
+        assert!(
+            code.contains(doc),
+            "Model::forward is missing its doc:\n{code}"
+        );
+        // Submodules after the first take an intermediate tensor, not `input`.
+        assert!(
+            code.contains("/// - `t"),
+            "submodule forward is missing its doc:\n{code}"
+        );
     }
 
     #[test]

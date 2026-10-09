@@ -23,6 +23,46 @@ pub fn tensor_type_tokens(rank: usize, dtype: &DType) -> TokenStream {
     }
 }
 
+/// The dtype of an argument whose Rust type does not show it.
+///
+/// `Tensor<2>` and `Tensor<2, Int>` name a kind, not a dtype: an I32 and an I64 input have
+/// the same signature. Native scalars, shapes and bool tensors are fully described by their
+/// type, so they return `None`.
+fn hidden_dtype(arg: &Argument) -> Option<&DType> {
+    let dtype = match &arg.ty {
+        ArgType::Tensor(tensor) => &tensor.dtype,
+        ArgType::ScalarTensor(dtype) => dtype,
+        ArgType::ScalarNative(_) | ArgType::Shape(_) => return None,
+    };
+    (!dtype.is_bool()).then_some(dtype)
+}
+
+/// `/// # Arguments` doc lines for a generated `forward`, one per argument whose dtype the
+/// signature hides.
+///
+/// Returns `None` when no argument needs one, so the caller omits the section entirely.
+pub fn codegen_args_doc(args: &[Argument]) -> Option<TokenStream> {
+    let lines: Vec<_> = args
+        .iter()
+        .filter_map(|arg| {
+            let dtype = hidden_dtype(arg)?;
+            // Use `arg.name`, not `arg_ident`: the `__arg_` tag on `arg_ident` is stripped
+            // from ident tokens only, so it would leak into the doc string.
+            let doc = format!(" - `{}`: expected dtype `DType::{dtype:?}`", arg.name);
+            Some(quote! { #[doc = #doc] })
+        })
+        .collect();
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    Some(quote! {
+        /// # Arguments
+        #(#lines)*
+    })
+}
+
 /// Get the type TokenStream for an argument
 pub fn arg_type_tokens(arg: &Argument) -> TokenStream {
     match &arg.ty {
@@ -175,7 +215,60 @@ pub fn codegen_return_expr(outputs: &[Argument]) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use onnx_ir::ir::BoolStore;
+    use onnx_ir::ir::{BoolStore, TensorType};
+
+    fn tensor_arg(name: &str, rank: usize, dtype: DType) -> Argument {
+        Argument::new(name, ArgType::Tensor(TensorType::new(dtype, rank, None)))
+    }
+
+    #[test]
+    fn args_doc_documents_tensor_dtype() {
+        // A tensor's Rust signature carries the rank but not the element dtype, so the
+        // doc line is the only place the ONNX-declared dtype is visible.
+        let args = [
+            tensor_arg("audio", 3, DType::F32),
+            tensor_arg("ids", 2, DType::I64),
+        ];
+
+        let doc = codegen_args_doc(&args).unwrap().to_string();
+        assert!(
+            doc.contains("- `audio`: expected dtype `DType::F32`"),
+            "{doc}"
+        );
+        assert!(
+            doc.contains("- `ids`: expected dtype `DType::I64`"),
+            "{doc}"
+        );
+    }
+
+    #[test]
+    fn args_doc_documents_scalar_tensor_dtype() {
+        // A `ScalarTensor` is a `Tensor<1, Int>` in the signature, which hides I32 vs I64.
+        let args = [Argument::new("n", ArgType::ScalarTensor(DType::I32))];
+
+        let doc = codegen_args_doc(&args).unwrap().to_string();
+        assert!(doc.contains("- `n`: expected dtype `DType::I32`"), "{doc}");
+    }
+
+    #[test]
+    fn args_doc_skips_args_whose_type_shows_the_dtype() {
+        let args = [
+            tensor_arg("mask", 2, DType::Bool(BoolStore::Native)),
+            Argument::new(
+                "flag",
+                ArgType::ScalarNative(DType::Bool(BoolStore::Native)),
+            ),
+            Argument::new("alpha", ArgType::ScalarNative(DType::F32)),
+            Argument::new("shape", ArgType::Shape(3)),
+        ];
+
+        assert!(codegen_args_doc(&args).is_none());
+    }
+
+    #[test]
+    fn args_doc_is_omitted_when_there_are_no_inputs() {
+        assert!(codegen_args_doc(&[]).is_none());
+    }
 
     #[test]
     fn tensor_type_tokens_preserves_tensor_kind() {
