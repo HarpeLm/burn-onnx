@@ -40,21 +40,27 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
                 let prelude = match &arg.ty {
                     ArgType::ScalarNative(_) => {
                         let ident = arg_to_ident(arg);
-                        // Clamp with `max(0)` before `as usize`. A negative
-                        // runtime k is out-of-spec for ONNX TopK; letting a
-                        // negative i64 wrap to a huge usize causes OOM or a
-                        // cryptic deep-burn panic. Clamp to zero so a
-                        // broken model produces an empty top-k result
-                        // instead. Adding observability is tracked in
-                        // tracel-ai/burn-onnx#328.
-                        quote! { let k: usize = (#ident as i64).max(0) as usize; }
+                        // A negative runtime k is out-of-spec for ONNX TopK;
+                        // letting a negative i64 wrap to a huge usize causes
+                        // OOM or a cryptic deep-burn panic. Debug builds stop
+                        // with a clear message; release builds clamp to zero
+                        // (empty top-k result), see tracel-ai/burn-onnx#328.
+                        quote! {
+                            let k: usize = {
+                                let k = #ident as i64;
+                                debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                                k.max(0) as usize
+                            };
+                        }
                     }
                     ArgType::ScalarTensor(_) | ArgType::Tensor(_) => {
                         let tensor = scope.arg(arg);
                         quote! {
                             let k: usize = {
                                 let data = #tensor.to_data().convert::<i64>();
-                                data.as_slice::<i64>().unwrap()[0].max(0) as usize
+                                let k = data.as_slice::<i64>().unwrap()[0];
+                                debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                                k.max(0) as usize
                             };
                         }
                     }
@@ -177,7 +183,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(
             &self,
             input: Tensor<2>,
@@ -186,13 +192,48 @@ mod tests {
             let (values, indices) = {
                 let k: usize = {
                     let data = k.to_data().convert::<i64>();
-                    data.as_slice::<i64>().unwrap()[0].max(0) as usize
+                    let k = data.as_slice::<i64>().unwrap()[0];
+                    debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                    k.max(0) as usize
                 };
                 let (values, indices) = input.topk_with_indices(k, 1);
                 (values, indices.cast(burn::tensor::DType::I64))
             };
             (values, indices)
         }
-        ");
+        "#);
+    }
+
+    #[test]
+    fn test_top_k_runtime_k_scalar_native() {
+        // k already scalarized to a native value by an earlier pass.
+        let config = TopKConfig::new(
+            1,
+            TopKInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("k".to_string(), 1)),
+            true,
+            true,
+        );
+        let node = TopKNodeBuilder::new("topk_rt")
+            .input_tensor("input", 2, DType::F32)
+            .input_scalar("k", DType::I64)
+            .output_tensor("values", 2, DType::F32)
+            .output_tensor("indices", 2, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<2>, k: i64) -> (Tensor<2>, Tensor<2, Int>) {
+            let (values, indices) = {
+                let k: usize = {
+                    let k = k as i64;
+                    debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                    k.max(0) as usize
+                };
+                let (values, indices) = input.topk_with_indices(k, 1);
+                (values, indices.cast(burn::tensor::DType::I64))
+            };
+            (values, indices)
+        }
+        "#);
     }
 }
