@@ -27,20 +27,19 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
                     ArgType::ScalarNative(_) => {
                         let ident = arg_to_ident(arg);
                         // A negative runtime depth is out-of-spec for ONNX
-                        // OneHot, but models in the wild occasionally emit
-                        // broken graphs; letting a negative i64 wrap to a
-                        // huge usize causes OOM or a cryptic deep-burn panic.
-                        // Debug builds stop with a clear message; release
-                        // builds clamp to 0 (a zero depth can still fail
-                        // later in the backend), see tracel-ai/burn-onnx#328.
+                        // OneHot (ORT rejects it too), but models in the wild
+                        // occasionally emit broken graphs; letting a negative
+                        // i64 wrap to a huge usize causes OOM or a cryptic
+                        // deep-burn panic, so stop with a clear message
+                        // instead, see tracel-ai/burn-onnx#328.
                         prelude.extend(quote! {
                             let depth: usize = {
                                 let depth = #ident as i64;
-                                debug_assert!(
+                                assert!(
                                     depth >= 0,
                                     "OneHot: depth must be non-negative, got {depth}"
                                 );
-                                depth.max(0) as usize
+                                depth as usize
                             };
                         });
                     }
@@ -50,11 +49,11 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
                             let depth: usize = {
                                 let data = #tensor.to_data().convert::<i64>();
                                 let depth = data.as_slice::<i64>().unwrap()[0];
-                                debug_assert!(
+                                assert!(
                                     depth >= 0,
                                     "OneHot: depth must be non-negative, got {depth}"
                                 );
-                                depth.max(0) as usize
+                                depth as usize
                             };
                         });
                     }
@@ -414,8 +413,8 @@ mod tests {
                 let depth: usize = {
                     let data = depth.to_data().convert::<i64>();
                     let depth = data.as_slice::<i64>().unwrap()[0];
-                    debug_assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
-                    depth.max(0) as usize
+                    assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
+                    depth as usize
                 };
                 let (off_value, on_value): (f32, f32) = {
                     let data = values.to_data().convert::<f32>();
@@ -457,8 +456,8 @@ mod tests {
                 let depth: usize = {
                     let data = depth.to_data().convert::<i64>();
                     let depth = data.as_slice::<i64>().unwrap()[0];
-                    debug_assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
-                    depth.max(0) as usize
+                    assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
+                    depth as usize
                 };
                 indices
                     .one_hot_fill(depth, 1f32, 0f32, -1i64)
@@ -642,8 +641,8 @@ mod tests {
             let output = {
                 let depth: usize = {
                     let depth = depth as i64;
-                    debug_assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
-                    depth.max(0) as usize
+                    assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
+                    depth as usize
                 };
                 indices
                     .one_hot_fill(depth, 1f32, 0f32, -1i64)

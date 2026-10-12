@@ -40,16 +40,16 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
                 let prelude = match &arg.ty {
                     ArgType::ScalarNative(_) => {
                         let ident = arg_to_ident(arg);
-                        // A negative runtime k is out-of-spec for ONNX TopK;
-                        // letting a negative i64 wrap to a huge usize causes
-                        // OOM or a cryptic deep-burn panic. Debug builds stop
-                        // with a clear message; release builds clamp to zero
-                        // (empty top-k result), see tracel-ai/burn-onnx#328.
+                        // A negative runtime k is out-of-spec for ONNX TopK
+                        // (ORT rejects it too). Letting a negative i64 wrap to
+                        // a huge usize causes OOM or a cryptic deep-burn panic,
+                        // so stop with a clear message instead, see
+                        // tracel-ai/burn-onnx#328.
                         quote! {
                             let k: usize = {
                                 let k = #ident as i64;
-                                debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
-                                k.max(0) as usize
+                                assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                                k as usize
                             };
                         }
                     }
@@ -59,8 +59,8 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
                             let k: usize = {
                                 let data = #tensor.to_data().convert::<i64>();
                                 let k = data.as_slice::<i64>().unwrap()[0];
-                                debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
-                                k.max(0) as usize
+                                assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                                k as usize
                             };
                         }
                     }
@@ -193,8 +193,8 @@ mod tests {
                 let k: usize = {
                     let data = k.to_data().convert::<i64>();
                     let k = data.as_slice::<i64>().unwrap()[0];
-                    debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
-                    k.max(0) as usize
+                    assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                    k as usize
                 };
                 let (values, indices) = input.topk_with_indices(k, 1);
                 (values, indices.cast(burn::tensor::DType::I64))
@@ -226,8 +226,8 @@ mod tests {
             let (values, indices) = {
                 let k: usize = {
                     let k = k as i64;
-                    debug_assert!(k >= 0, "TopK: k must be non-negative, got {k}");
-                    k.max(0) as usize
+                    assert!(k >= 0, "TopK: k must be non-negative, got {k}");
+                    k as usize
                 };
                 let (values, indices) = input.topk_with_indices(k, 1);
                 (values, indices.cast(burn::tensor::DType::I64))

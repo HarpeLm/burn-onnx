@@ -111,11 +111,10 @@ mod tests {
         );
     }
 
-    // A negative runtime depth is out-of-spec; debug builds stop with a clear message.
+    // A negative runtime depth is out-of-spec; stop with a clear message.
     #[test]
-    #[cfg(debug_assertions)]
     #[should_panic(expected = "OneHot: depth must be non-negative, got -1")]
-    fn one_hot_runtime_depth_negative_panics_in_debug() {
+    fn one_hot_runtime_depth_negative_panics() {
         let device = Default::default();
         let model = one_hot_runtime_depth::Model::from_file(
             concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth.bpk"),
@@ -146,9 +145,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
     #[should_panic(expected = "OneHot: depth must be non-negative, got -1")]
-    fn one_hot_runtime_depth_tensor_negative_panics_in_debug() {
+    fn one_hot_runtime_depth_tensor_negative_panics() {
         let device = Default::default();
         let model = one_hot_runtime_depth_tensor::Model::from_file(
             concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth_tensor.bpk"),

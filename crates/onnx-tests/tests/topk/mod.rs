@@ -321,11 +321,10 @@ mod tests {
             .assert_eq(&TensorData::from([1i64, 3]), true);
     }
 
-    // A negative runtime k is out-of-spec; debug builds stop with a clear message.
+    // A negative runtime k is out-of-spec; stop with a clear message.
     #[test]
-    #[cfg(debug_assertions)]
     #[should_panic(expected = "TopK: k must be non-negative, got -1")]
-    fn topk_runtime_k_negative_panics_in_debug() {
+    fn topk_runtime_k_negative_panics() {
         let device = Default::default();
         let model = topk_runtime_k::Model::from_file(
             concat!(env!("OUT_DIR"), "/model/topk_runtime_k.bpk"),
