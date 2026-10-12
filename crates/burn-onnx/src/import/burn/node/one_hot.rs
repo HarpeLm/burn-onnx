@@ -26,18 +26,21 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
                 match &arg.ty {
                     ArgType::ScalarNative(_) => {
                         let ident = arg_to_ident(arg);
-                        // Clamp with `max(0)` before the `as usize` cast.
                         // A negative runtime depth is out-of-spec for ONNX
-                        // OneHot, but models in the wild occasionally emit
-                        // broken graphs; letting a negative i64 wrap to a
-                        // huge usize causes OOM or a cryptic deep-burn
-                        // panic, so we clamp invalid negative depths to 0.
-                        // This silently produces a zero-class one_hot result
-                        // for broken models; adding observability
-                        // (`log::warn!` or `debug_assert!`) is tracked in
-                        // tracel-ai/burn-onnx#328.
+                        // OneHot (ORT rejects it too), but models in the wild
+                        // occasionally emit broken graphs; letting a negative
+                        // i64 wrap to a huge usize causes OOM or a cryptic
+                        // deep-burn panic, so stop with a clear message
+                        // instead, see tracel-ai/burn-onnx#328.
                         prelude.extend(quote! {
-                            let depth: usize = (#ident as i64).max(0) as usize;
+                            let depth: usize = {
+                                let depth = #ident as i64;
+                                assert!(
+                                    depth >= 0,
+                                    "OneHot: depth must be non-negative, got {depth}"
+                                );
+                                depth as usize
+                            };
                         });
                     }
                     ArgType::ScalarTensor(_) | ArgType::Tensor(_) => {
@@ -45,7 +48,12 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
                         prelude.extend(quote! {
                             let depth: usize = {
                                 let data = #tensor.to_data().convert::<i64>();
-                                data.as_slice::<i64>().unwrap()[0].max(0) as usize
+                                let depth = data.as_slice::<i64>().unwrap()[0];
+                                assert!(
+                                    depth >= 0,
+                                    "OneHot: depth must be non-negative, got {depth}"
+                                );
+                                depth as usize
                             };
                         });
                     }
@@ -394,7 +402,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(
             &self,
             indices: Tensor<1, Int>,
@@ -404,7 +412,9 @@ mod tests {
             let output = {
                 let depth: usize = {
                     let data = depth.to_data().convert::<i64>();
-                    data.as_slice::<i64>().unwrap()[0].max(0) as usize
+                    let depth = data.as_slice::<i64>().unwrap()[0];
+                    assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
+                    depth as usize
                 };
                 let (off_value, on_value): (f32, f32) = {
                     let data = values.to_data().convert::<f32>();
@@ -418,7 +428,7 @@ mod tests {
             };
             output
         }
-        ");
+        "#);
     }
 
     #[test]
@@ -440,12 +450,14 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(&self, indices: Tensor<1, Int>, depth: Tensor<1, Int>) -> Tensor<2> {
             let output = {
                 let depth: usize = {
                     let data = depth.to_data().convert::<i64>();
-                    data.as_slice::<i64>().unwrap()[0].max(0) as usize
+                    let depth = data.as_slice::<i64>().unwrap()[0];
+                    assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
+                    depth as usize
                 };
                 indices
                     .one_hot_fill(depth, 1f32, 0f32, -1i64)
@@ -454,7 +466,7 @@ mod tests {
             };
             output
         }
-        ");
+        "#);
     }
 
     #[test]
@@ -608,5 +620,37 @@ mod tests {
             output
         }
         ");
+    }
+
+    #[test]
+    fn test_one_hot_runtime_depth_scalar_native() {
+        let config = OneHotConfig::new(
+            OneHotDepthInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("depth".to_string(), 1)),
+            OneHotValuesInput::Static([0.0, 1.0]),
+            -1,
+        );
+        let node = OneHotNodeBuilder::new("onehot_rt_native")
+            .input_tensor("indices", 1, DType::I64)
+            .input_scalar("depth", DType::I64)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, indices: Tensor<1, Int>, depth: i64) -> Tensor<2> {
+            let output = {
+                let depth: usize = {
+                    let depth = depth as i64;
+                    assert!(depth >= 0, "OneHot: depth must be non-negative, got {depth}");
+                    depth as usize
+                };
+                indices
+                    .one_hot_fill(depth, 1f32, 0f32, -1i64)
+                    .float()
+                    .cast(burn::tensor::DType::F32)
+            };
+            output
+        }
+        "#);
     }
 }

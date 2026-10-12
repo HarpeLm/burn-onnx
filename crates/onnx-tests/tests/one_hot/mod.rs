@@ -1,5 +1,12 @@
 use crate::include_models;
-include_models!(one_hot, one_hot_axis0, one_hot_float_values, one_hot_2d);
+include_models!(
+    one_hot,
+    one_hot_axis0,
+    one_hot_float_values,
+    one_hot_2d,
+    one_hot_runtime_depth,
+    one_hot_runtime_depth_tensor
+);
 
 #[cfg(test)]
 mod tests {
@@ -84,5 +91,70 @@ mod tests {
         ]);
 
         output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn one_hot_runtime_depth() {
+        // Expected values from one_hot_runtime_depth.py (onnx ReferenceEvaluator).
+        let device = Default::default();
+        let model = one_hot_runtime_depth::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth.bpk"),
+            &device,
+        );
+        let indices = Tensor::<1, Int>::from_ints([0, 2, 1], &device);
+
+        let output = model.forward(indices, 3);
+
+        output.to_data().assert_eq(
+            &TensorData::from([[1.0f32, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]),
+            true,
+        );
+    }
+
+    // A negative runtime depth is out-of-spec; stop with a clear message.
+    #[test]
+    #[should_panic(expected = "OneHot: depth must be non-negative, got -1")]
+    fn one_hot_runtime_depth_negative_panics() {
+        let device = Default::default();
+        let model = one_hot_runtime_depth::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth.bpk"),
+            &device,
+        );
+        let indices = Tensor::<1, Int>::from_ints([0, 2, 1], &device);
+
+        let _ = model.forward(indices, -1);
+    }
+
+    #[test]
+    fn one_hot_runtime_depth_tensor() {
+        // Expected values from one_hot_runtime_depth_tensor.py (onnx ReferenceEvaluator).
+        let device = Default::default();
+        let model = one_hot_runtime_depth_tensor::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth_tensor.bpk"),
+            &device,
+        );
+        let indices = Tensor::<1, Int>::from_ints([0, 2, 1], &device);
+        let depth = Tensor::<1, Int>::from_ints([3], &device);
+
+        let output = model.forward(indices, depth);
+
+        output.to_data().assert_eq(
+            &TensorData::from([[1.0f32, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]]),
+            true,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "OneHot: depth must be non-negative, got -1")]
+    fn one_hot_runtime_depth_tensor_negative_panics() {
+        let device = Default::default();
+        let model = one_hot_runtime_depth_tensor::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth_tensor.bpk"),
+            &device,
+        );
+        let indices = Tensor::<1, Int>::from_ints([0, 2, 1], &device);
+        let depth = Tensor::<1, Int>::from_ints([-1], &device);
+
+        let _ = model.forward(indices, depth);
     }
 }

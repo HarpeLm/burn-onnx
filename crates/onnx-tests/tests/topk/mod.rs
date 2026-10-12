@@ -6,7 +6,8 @@ include_models!(
     topk_3d,
     topk_k_full,
     topk_negative_axis,
-    topk_smallest
+    topk_smallest,
+    topk_runtime_k
 );
 
 #[cfg(test)]
@@ -297,5 +298,41 @@ mod tests {
             &TensorData::from([[1i64, 2, 4], [0, 1, 2], [1, 3, 0]]),
             true,
         );
+    }
+
+    #[test]
+    fn topk_runtime_k() {
+        // Expected values from topk_runtime_k.py (onnx ReferenceEvaluator).
+        let device = Default::default();
+        let model = topk_runtime_k::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/topk_runtime_k.bpk"),
+            &device,
+        );
+        let x = Tensor::<1>::from_floats([1.0, 5.0, 3.0, 4.0, 2.0], &device);
+        let k = Tensor::<1, burn::tensor::Int>::from_ints([2], &device);
+
+        let (values, indices) = model.forward(x, k);
+
+        values
+            .to_data()
+            .assert_eq(&TensorData::from([5.0f32, 4.0]), true);
+        indices
+            .to_data()
+            .assert_eq(&TensorData::from([1i64, 3]), true);
+    }
+
+    // A negative runtime k is out-of-spec; stop with a clear message.
+    #[test]
+    #[should_panic(expected = "TopK: k must be non-negative, got -1")]
+    fn topk_runtime_k_negative_panics() {
+        let device = Default::default();
+        let model = topk_runtime_k::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/topk_runtime_k.bpk"),
+            &device,
+        );
+        let x = Tensor::<1>::from_floats([1.0, 5.0, 3.0, 4.0, 2.0], &device);
+        let k = Tensor::<1, burn::tensor::Int>::from_ints([-1], &device);
+
+        let _ = model.forward(x, k);
     }
 }
