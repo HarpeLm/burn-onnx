@@ -1087,3 +1087,14 @@ fn test_late_lifted_constant_error_is_returned() {
         .to_string();
     assert!(err.contains("Upsample"), "{err}");
 }
+
+#[test]
+fn test_clip_non_scalar_runtime_bound_is_rejected() {
+    // Clip min/max must be scalars. A runtime bound with shape [2] used to pass import and
+    // only fail later with a panic in codegen.
+    let err = onnx_ir::OnnxGraphBuilder::new()
+        .parse_file(get_model_path("clip_non_scalar_runtime_bound.onnx"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("scalar Clip min"), "{err}");
+}
