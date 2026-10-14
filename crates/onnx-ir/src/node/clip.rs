@@ -92,7 +92,23 @@ impl NodeProcessor for ClipProcessor {
         // TODO: Validate behavior when min > max - spec says "all values are set to max" but not tested
         // TODO: Add test for integer type clipping (int8, int16, int32, uint8, uint16) - opset 12+; int64 and uint32 are covered
         // TODO: Add test for NaN/Inf handling - spec doesn't specify behavior
-        // TODO: Validate runtime min/max shapes (opset 11+) - must be scalars; constant bounds are checked in extract_config
+
+        // Clip min/max must be scalars (tensors of empty shape). Codegen only lowers scalar
+        // runtime bounds; constant bounds are checked in extract_config.
+        for (index, name) in [(1, "min"), (2, "max")] {
+            if let Some(input) = node.get_input(index)
+                && input.value().is_none()
+                && !matches!(
+                    input.ty,
+                    ArgType::ScalarNative(_) | ArgType::ScalarTensor(_)
+                )
+            {
+                return Err(ProcessError::TypeMismatch {
+                    expected: format!("scalar Clip {name}"),
+                    actual: format!("{:?}", input.ty),
+                });
+            }
+        }
 
         // Infer output type
         same_as_input(node);
@@ -248,11 +264,16 @@ mod tests {
         // Input 1: min (optional)
         // Input 2: max (optional)
         // We need to maintain the correct positions even if values are None
-        TestNodeBuilder::new(NodeType::Clip, "test_clip")
-            .input_tensor_f32("X", 4, None)
-            .input_scalar_tensor_f32("min", min)
-            .input_scalar_tensor_f32("max", max)
-            .output_tensor_f32("Y", 4, None)
+        // A bound without a value is a runtime input: a native scalar, as a rank-0 graph input
+        // becomes on import
+        let bound = |builder: TestNodeBuilder, name: &str, value: Option<f32>| match value {
+            Some(_) => builder.input_scalar_tensor_f32(name, value),
+            None => builder.input_scalar_f32(name),
+        };
+        let builder =
+            TestNodeBuilder::new(NodeType::Clip, "test_clip").input_tensor_f32("X", 4, None);
+        let builder = bound(builder, "min", min);
+        bound(builder, "max", max).output_tensor_f32("Y", 4, None)
     }
 
     #[test]
@@ -370,8 +391,8 @@ mod tests {
     fn create_test_node_with_runtime_inputs() -> TestNodeBuilder {
         TestNodeBuilder::new(NodeType::Clip, "test_clip")
             .input_tensor_f32("X", 4, None)
-            .input_tensor_f32("min", 0, None) // Runtime input - no static value
-            .input_tensor_f32("max", 0, None) // Runtime input - no static value
+            .input_scalar_f32("min") // Runtime input - no static value
+            .input_scalar_f32("max") // Runtime input - no static value
             .output_tensor_f32("Y", 4, None)
     }
 
@@ -398,7 +419,7 @@ mod tests {
         let builder = TestNodeBuilder::new(NodeType::Clip, "test_clip")
             .input_tensor_f32("X", 4, None)
             .input_scalar_tensor_f32("min", Some(-1.0)) // Static
-            .input_tensor_f32("max", 0, None) // Runtime
+            .input_scalar_f32("max") // Runtime
             .output_tensor_f32("Y", 4, None);
 
         let node = builder.build_with_graph_data(16);
@@ -569,5 +590,76 @@ mod tests {
             config.min,
             Some(ClipInput::Static(Scalar::Int(-300)))
         ));
+    }
+
+    /// Clip with a runtime `min` of the given type and no `max`.
+    fn clip_node_with_runtime_min(min: ArgType) -> RawNode {
+        TestNodeBuilder::new(NodeType::Clip, "test_clip")
+            .input_tensor_f32("X", 4, None)
+            .add_input("min", min)
+            .output_tensor_f32("Y", 4, None)
+            .build()
+    }
+
+    #[test]
+    fn test_clip_accepts_scalar_tensor_runtime_bound() {
+        let mut node = clip_node_with_runtime_min(ArgType::ScalarTensor(DType::F32));
+        ClipProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
+        let config = ClipProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(config.min, Some(ClipInput::Runtime(ref arg)) if arg.name == "min"));
+    }
+
+    #[test]
+    fn test_clip_infer_types_rejects_non_scalar_runtime_bound() {
+        // Clip min/max must be scalars; codegen only lowers scalar runtime bounds.
+        for ty in [
+            ArgType::Tensor(TensorType {
+                dtype: DType::F32,
+                rank: 1,
+                static_shape: Some(vec![Some(2)]),
+            }),
+            ArgType::Shape(1),
+        ] {
+            let mut node = clip_node_with_runtime_min(ty.clone());
+            let err = ClipProcessor
+                .infer_types(&mut node, 16, &OutputPreferences::new())
+                .unwrap_err();
+            assert!(
+                matches!(&err, ProcessError::TypeMismatch { expected, .. } if expected == "scalar Clip min"),
+                "{ty:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_clip_infer_types_rejects_non_scalar_runtime_max() {
+        // The check covers both bound positions: min (input 1) and max (input 2).
+        let mut node = TestNodeBuilder::new(NodeType::Clip, "test_clip")
+            .input_tensor_f32("X", 4, None)
+            .input_scalar_f32("min")
+            .input_tensor_f32("max", 1, Some(vec![2]))
+            .output_tensor_f32("Y", 4, None)
+            .build();
+        let err = ClipProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap_err();
+        assert!(
+            matches!(&err, ProcessError::TypeMismatch { expected, .. } if expected == "scalar Clip max"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_clip_infer_types_skips_constant_bounds() {
+        // The runtime-bound check doesn't apply to constants: a single-element rank-1 constant
+        // is read as a scalar by extract_config.
+        let mut node = clip_node_with_bound(DType::F32, TensorData::new(vec![0.5f32], [1]));
+        ClipProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
+        let config = ClipProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(config.min, Some(ClipInput::Static(Scalar::Float(v))) if v == 0.5));
     }
 }

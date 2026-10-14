@@ -79,9 +79,8 @@ fn clip_bound_expr(
                     let native = on_device_to_native(quote! { #tensor }, dtype);
                     Some(quote! { #native as #cast_ty })
                 }
-                other => panic!(
-                    "Clip min/max must be a scalar (ScalarNative or ScalarTensor), got {other:?}"
-                ),
+                // onnx-ir rejects non-scalar runtime bounds with a ProcessError
+                other => unreachable!("Clip min/max must be a scalar, got {other:?}"),
             }
         }
     }
