@@ -96,8 +96,7 @@ impl NodeProcessor for ClipProcessor {
         // Clip min/max must be scalars (tensors of empty shape). Codegen only lowers scalar
         // runtime bounds; constant bounds are checked in extract_config.
         for (index, name) in [(1, "min"), (2, "max")] {
-            if let Some(input) = node.inputs.get(index)
-                && !input.is_optional()
+            if let Some(input) = node.get_input(index)
                 && input.value().is_none()
                 && !matches!(
                     input.ty,
