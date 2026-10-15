@@ -1675,6 +1675,133 @@ mod tests {
         );
     }
 
+    /// Two TopK nodes chained through their values output, each with its
+    /// own runtime `k` scalar.
+    fn build_two_topk_chain() -> BurnGraph {
+        use onnx_ir::topk::{TopKConfig, TopKInput, TopKNodeBuilder};
+
+        let mut graph = BurnGraph::default();
+
+        let mk = |name: &str, input: &str, k: &str, values: &str, indices: &str| {
+            TopKNodeBuilder::new(name)
+                .input_tensor(input, 2, DType::F32)
+                .input_scalar(k, DType::I64)
+                .output_tensor(values, 2, DType::F32)
+                .output_tensor(indices, 2, DType::I64)
+                .config(TopKConfig::new(
+                    1,
+                    TopKInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(k.to_string(), 1)),
+                    true,
+                    true,
+                ))
+                .build()
+        };
+
+        graph.register(Node::TopK(mk("topk0", "input", "k0", "v0", "i0")));
+        graph.register(Node::TopK(mk("topk1", "v0", "k1", "v1", "i1")));
+
+        graph.register_input_output(
+            vec!["input".to_string(), "k0".to_string(), "k1".to_string()],
+            vec!["v1".to_string(), "i0".to_string(), "i1".to_string()],
+            &[],
+            &[],
+        );
+
+        graph
+    }
+
+    /// Two OneHot nodes with independent indices and runtime depths.
+    fn build_two_onehot() -> BurnGraph {
+        use onnx_ir::one_hot::{
+            OneHotConfig, OneHotDepthInput, OneHotNodeBuilder, OneHotValuesInput,
+        };
+
+        let mut graph = BurnGraph::default();
+
+        let mk = |name: &str, indices: &str, depth: &str, out: &str| {
+            OneHotNodeBuilder::new(name)
+                .input_tensor(indices, 1, DType::I64)
+                .input_scalar(depth, DType::I64)
+                .output_tensor(out, 2, DType::F32)
+                .config(OneHotConfig::new(
+                    OneHotDepthInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+                        depth.to_string(),
+                        1,
+                    )),
+                    OneHotValuesInput::Static([0.0, 1.0]),
+                    -1,
+                ))
+                .build()
+        };
+
+        graph.register(Node::OneHot(mk("onehot0", "idx0", "depth0", "o0")));
+        graph.register(Node::OneHot(mk("onehot1", "idx1", "depth1", "o1")));
+
+        graph.register_input_output(
+            vec![
+                "idx0".to_string(),
+                "depth0".to_string(),
+                "idx1".to_string(),
+                "depth1".to_string(),
+            ],
+            vec!["o0".to_string(), "o1".to_string()],
+            &[],
+            &[],
+        );
+
+        graph
+    }
+
+    /// Asserts that the snippets appear in `code`, in this order.
+    fn assert_in_order(code: &str, snippets: &[&str]) {
+        let mut from = 0;
+        for snippet in snippets {
+            let at = code[from..]
+                .find(snippet)
+                .unwrap_or_else(|| panic!("`{snippet}` missing or out of order:\n{code}"));
+            from += at + snippet.len();
+        }
+    }
+
+    /// #328 item 6: two runtime-`k` TopK nodes in the same forward() must each
+    /// read their own `k`, with the `k` temporaries scoped to their own block.
+    #[test]
+    fn multi_instance_topk_runtime_k() {
+        let code = format_tokens(build_two_topk_chain().codegen());
+
+        assert_in_order(
+            &code,
+            &[
+                "let (v0, i0) = {",
+                "let k = k0 as i64;",
+                "input.topk_with_indices(k, 1)",
+                "let (v1, i1) = {",
+                "let k = k1 as i64;",
+                "v0.topk_with_indices(k, 1)",
+            ],
+        );
+    }
+
+    /// #328 item 6: two runtime-depth OneHot nodes in the same forward() must
+    /// each read their own depth, with the `depth` temporaries scoped to their
+    /// own block.
+    #[test]
+    fn multi_instance_onehot_runtime_depth() {
+        let code = format_tokens(build_two_onehot().codegen());
+
+        assert_in_order(
+            &code,
+            &[
+                "let o0 = {",
+                "let depth = depth0 as i64;",
+                "idx0.one_hot_fill(depth,",
+                "let o1 = {",
+                "let depth = depth1 as i64;",
+                "idx1.one_hot_fill(depth,",
+            ],
+        );
+    }
+
     /// Hook whose forward leaks a temporary to function scope, the shape the
     /// shadow check has to carry from one node to the next.
     struct LeakyTempOp;

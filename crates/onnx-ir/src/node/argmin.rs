@@ -326,6 +326,22 @@ mod tests {
     }
 
     #[test]
+    fn test_argmin_infer_types_returns_error_for_invalid_select_last_index() {
+        // #328 item 6: infer_types propagates the extract_config error instead of
+        // panicking, so an invalid attribute surfaces as a ProcessError.
+        let mut node = create_test_node(0, 1, 1);
+        node.attrs.insert(
+            "select_last_index".to_string(),
+            crate::ir::AttributeValue::Int64(2),
+        );
+        let result = ArgMinProcessor.infer_types(&mut node, 16, &OutputPreferences::new());
+        assert!(
+            matches!(&result, Err(ProcessError::InvalidAttribute { name, .. }) if name == "select_last_index"),
+            "{result:?}"
+        );
+    }
+
+    #[test]
     fn test_argmin_update_outputs_keepdims_0() {
         // Test argmin with keepdims=0 - output rank should be reduced but minimum 1 for burn
         let mut node = TestNodeBuilder::new(NodeType::ArgMin, "test_argmin_keepdims_0")
