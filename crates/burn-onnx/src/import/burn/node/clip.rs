@@ -479,4 +479,29 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_clip_runtime_int_max_only_scalar_tensor() {
+        // #328 item 6: max-only runtime bound on an int input goes through clamp_max as i64.
+        let config = ClipConfig {
+            min: None,
+            max: Some(ClipInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+                "max_val".to_string(),
+                1,
+            ))),
+        };
+        let node = ClipNodeBuilder::new("clip1")
+            .input_tensor("input", 2, DType::I64)
+            .input_scalar_tensor("max_val", DType::I64)
+            .output_tensor("output", 2, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<2, Int>, max_val: Tensor<1, Int>) -> Tensor<2, Int> {
+            let output = input.clamp_max((max_val).into_scalar::<i64>() as i64);
+            output
+        }
+        ");
+    }
 }
