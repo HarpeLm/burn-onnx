@@ -1752,7 +1752,8 @@ mod tests {
         graph
     }
 
-    /// Asserts that the snippets appear in `code`, in this order.
+    /// Asserts that the snippets appear in `code`, in this order. A receiver and its method
+    /// call are separate snippets, since the formatter may break the line between them.
     fn assert_in_order(code: &str, snippets: &[&str]) {
         let mut from = 0;
         for snippet in snippets {
@@ -1774,10 +1775,12 @@ mod tests {
             &[
                 "let (v0, i0) = {",
                 "let k = k0 as i64;",
-                "input.topk_with_indices(k, 1)",
+                "input",
+                ".topk_with_indices(k, 1)",
                 "let (v1, i1) = {",
                 "let k = k1 as i64;",
-                "v0.topk_with_indices(k, 1)",
+                "v0",
+                ".topk_with_indices(k, 1)",
             ],
         );
     }
@@ -1794,10 +1797,12 @@ mod tests {
             &[
                 "let o0 = {",
                 "let depth = depth0 as i64;",
-                "idx0.one_hot_fill(depth,",
+                "idx0",
+                ".one_hot_fill(depth,",
                 "let o1 = {",
                 "let depth = depth1 as i64;",
-                "idx1.one_hot_fill(depth,",
+                "idx1",
+                ".one_hot_fill(depth,",
             ],
         );
     }
