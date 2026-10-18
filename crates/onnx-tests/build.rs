@@ -473,6 +473,8 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/one_hot/one_hot_float_values.onnx")
         .input("tests/one_hot/one_hot_runtime_depth.onnx")
         .input("tests/one_hot/one_hot_runtime_depth_tensor.onnx")
+        .input("tests/one_hot/one_hot_out_of_range.onnx")
+        .input("tests/one_hot/one_hot_zero_depth.onnx")
         .input("tests/one_hot_encoder/one_hot_encoder_2d.onnx")
         .input("tests/one_hot_encoder/one_hot_encoder_f32.onnx")
         .input("tests/one_hot_encoder/one_hot_encoder_f32_large_cats.onnx")

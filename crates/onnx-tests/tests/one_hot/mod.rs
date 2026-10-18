@@ -5,7 +5,9 @@ include_models!(
     one_hot_float_values,
     one_hot_2d,
     one_hot_runtime_depth,
-    one_hot_runtime_depth_tensor
+    one_hot_runtime_depth_tensor,
+    one_hot_out_of_range,
+    one_hot_zero_depth
 );
 
 #[cfg(test)]
@@ -156,5 +158,100 @@ mod tests {
         let depth = Tensor::<1, Int>::from_ints([-1], &device);
 
         let _ = model.forward(indices, depth);
+    }
+
+    #[test]
+    fn one_hot_out_of_range() {
+        // Indices outside [-depth, depth - 1] give an off_value row (#621).
+        // Expected values from one_hot_out_of_range.py (ONNX Runtime; onnx's
+        // ReferenceEvaluator wraps out-of-range indices instead).
+        let device = Default::default();
+        let model = one_hot_out_of_range::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_out_of_range.bpk"),
+            &device,
+        );
+        let indices: Tensor<1, Int> = Tensor::from_data(
+            TensorData::from([0i64, 7, -4, 2, -3, -1]),
+            (&device, DType::I64),
+        );
+
+        let output = model.forward(indices);
+
+        output.to_data().assert_eq(
+            &TensorData::from([
+                [5.0f32, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 5.0],
+                [5.0, 0.0, 0.0],
+                [0.0, 0.0, 5.0],
+            ]),
+            true,
+        );
+    }
+
+    #[test]
+    fn one_hot_zero_depth() {
+        // depth 0: every index is out of range and the one-hot axis is empty (#621).
+        let device = Default::default();
+        let model = one_hot_zero_depth::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_zero_depth.bpk"),
+            &device,
+        );
+        let indices: Tensor<1, Int> =
+            Tensor::from_data(TensorData::from([0i64, 1, -1]), (&device, DType::I64));
+
+        let output = model.forward(indices);
+
+        assert_eq!(output.dims(), [3, 0]);
+    }
+
+    #[test]
+    fn one_hot_runtime_depth_out_of_range() {
+        // The reproduction from #621: runtime depth 3 with index 7 gives an off_value row.
+        let device = Default::default();
+        let model = one_hot_runtime_depth::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth.bpk"),
+            &device,
+        );
+        let indices = Tensor::<1, Int>::from_ints([0, 7, 1], &device);
+
+        let output = model.forward(indices, 3);
+
+        output.to_data().assert_eq(
+            &TensorData::from([[1.0f32, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            true,
+        );
+    }
+
+    #[test]
+    fn one_hot_runtime_depth_zero() {
+        // A runtime depth of 0 passes the non-negative assert from #620 and gives an empty
+        // one-hot axis (#621).
+        let device = Default::default();
+        let model = one_hot_runtime_depth::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth.bpk"),
+            &device,
+        );
+        let indices = Tensor::<1, Int>::from_ints([0, 2, 1], &device);
+
+        let output = model.forward(indices, 0);
+
+        assert_eq!(output.dims(), [3, 0]);
+    }
+
+    #[test]
+    fn one_hot_runtime_depth_tensor_zero() {
+        let device = Default::default();
+        let model = one_hot_runtime_depth_tensor::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/one_hot_runtime_depth_tensor.bpk"),
+            &device,
+        );
+        let indices = Tensor::<1, Int>::from_ints([0, 2, 1], &device);
+        let depth = Tensor::<1, Int>::from_ints([0], &device);
+
+        let output = model.forward(indices, depth);
+
+        assert_eq!(output.dims(), [3, 0]);
     }
 }
