@@ -709,6 +709,7 @@ fn resize(graph: &OnnxGraph) {
             extrapolation_value: 0.0,
             antialias: 0,
             axes: None,
+            keep_aspect_ratio_policy: Stretch,
         }
     "#);
 }

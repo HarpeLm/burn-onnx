@@ -11,7 +11,9 @@ include_models!(
     resize_with_sizes_tensor,
     resize_with_scales_tensor,
     resize_axes_static,
-    resize_axes_runtime
+    resize_axes_runtime,
+    resize_keep_aspect_ratio_static,
+    resize_keep_aspect_ratio_runtime
 );
 
 #[cfg(test)]
@@ -413,5 +415,78 @@ mod tests {
             ]]]),
             true,
         );
+    }
+
+    #[test]
+    fn resize_keep_aspect_ratio_static() {
+        // Expected values from resize_keep_aspect_ratio_static.py (ONNX Runtime). Constant sizes
+        // [7, 8] on a 2x2 input: not_larger -> 7x7, not_smaller -> 8x8 (adjusted at import).
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_static::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_static.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
+
+        let (not_larger, not_smaller) = model.forward(input);
+
+        // Rows/columns 0..4 come from the first input row/column, the rest from the second
+        let expected = |n: usize, split: usize| {
+            let mut values = Vec::with_capacity(n * n);
+            for row in 0..n {
+                for col in 0..n {
+                    let top = if row < split { 0.0f32 } else { 2.0 };
+                    let left = if col < split { 1.0 } else { 2.0 };
+                    values.push(top + left);
+                }
+            }
+            TensorData::new(values, [1, 1, n, n])
+        };
+        not_larger.to_data().assert_eq(&expected(7, 4), true);
+        not_smaller.to_data().assert_eq(&expected(8, 4), true);
+    }
+
+    #[test]
+    fn resize_keep_aspect_ratio_runtime_keeps_batch_and_channel() {
+        // Expected values from resize_keep_aspect_ratio_runtime.py (ONNX Runtime). Without axes
+        // every axis is listed: sizes [1, 1, 1, 2] -> scale max(1, 1, 0.5, 1) = 1, size unchanged.
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_runtime::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_runtime.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
+        let sizes = Tensor::<1, burn::tensor::Int>::from_ints([1, 1, 1, 2], &device);
+
+        let output = model.forward(input, sizes);
+
+        output
+            .to_data()
+            .assert_eq(&TensorData::from([[[[1.0f32, 2.0], [3.0, 4.0]]]]), true);
+    }
+
+    #[test]
+    #[should_panic(expected = "Resize: keep_aspect_ratio_policy would resize axis 0")]
+    fn resize_keep_aspect_ratio_runtime_rejects_batch_resize() {
+        // sizes [1, 1, 2, 3] -> scale 1.5, which would resize the batch axis (ONNX Runtime
+        // outputs 2x2x3x3); burn only resizes spatial axes, so this stops with a clear message.
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_runtime::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_runtime.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
+        let sizes = Tensor::<1, burn::tensor::Int>::from_ints([1, 1, 2, 3], &device);
+
+        let _ = model.forward(input, sizes);
     }
 }

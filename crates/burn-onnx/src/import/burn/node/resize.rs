@@ -110,7 +110,7 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
-        use onnx_ir::node::resize::{ResizeMode, ResizeScales, ResizeSizes};
+        use onnx_ir::node::resize::{KeepAspectRatioPolicy, ResizeMode, ResizeScales, ResizeSizes};
 
         let input_arg = self.inputs.first().unwrap();
         let input = scope.arg(input_arg);
@@ -166,6 +166,65 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                 }
             };
 
+            // Runtime sizes with keep_aspect_ratio_policy: one scale, the min (not_larger) or
+            // max (not_smaller) of sizes[i] / input_dims[d] over the listed axes (`axes`, or
+            // all four without it), applied to each listed spatial axis and rounded half up.
+            // Burn only resizes the spatial axes, so listed batch/channel sizes must not change.
+            let sizes_targets = |values: TokenStream| {
+                let policy = self.config.keep_aspect_ratio_policy;
+                if policy == KeepAspectRatioPolicy::Stretch {
+                    return (
+                        sizes_input_dims.clone(),
+                        quote! {},
+                        target(height_pos, 2, values.clone(), false),
+                        target(width_pos, 3, values, false),
+                    );
+                }
+                let listed: Vec<(usize, usize)> = match &self.config.axes {
+                    Some(axes) => axes.iter().copied().enumerate().collect(),
+                    None => (0..4).map(|dim| (dim, dim)).collect(),
+                };
+                let ratios = listed.iter().map(|&(pos, dim)| {
+                    let (pos, dim) = (
+                        proc_macro2::Literal::usize_unsuffixed(pos),
+                        proc_macro2::Literal::usize_unsuffixed(dim),
+                    );
+                    quote! { (#values[#pos] as f64) / (input_dims[#dim] as f64) }
+                });
+                let fold = match policy {
+                    KeepAspectRatioPolicy::NotLarger => quote! { fold(f64::INFINITY, f64::min) },
+                    _ => quote! { fold(f64::NEG_INFINITY, f64::max) },
+                };
+                let unchanged = listed.iter().filter(|&&(_, dim)| dim < 2).map(|&(_, dim)| {
+                    let message =
+                        format!("Resize: keep_aspect_ratio_policy would resize axis {dim}");
+                    let dim = proc_macro2::Literal::usize_unsuffixed(dim);
+                    quote! {
+                        assert!(
+                            (scale * input_dims[#dim] as f64 + 0.5) as usize == input_dims[#dim],
+                            #message
+                        );
+                    }
+                });
+                let scale = quote! {
+                    let scale = [#(#ratios),*].into_iter().#fold;
+                    #(#unchanged)*
+                };
+                let adjusted = |pos: Option<usize>, dim: usize| {
+                    let dim = proc_macro2::Literal::usize_unsuffixed(dim);
+                    match pos {
+                        Some(_) => quote! { (scale * input_dims[#dim] as f64 + 0.5) as usize },
+                        None => quote! { input_dims[#dim] },
+                    }
+                };
+                (
+                    quote! { let input_dims = #input.dims(); },
+                    scale,
+                    adjusted(height_pos, 2),
+                    adjusted(width_pos, 3),
+                )
+            };
+
             // Handle runtime sizes or scales input
             // Per ONNX spec: either sizes or scales must be provided (mutually exclusive)
             if let Some(ResizeSizes::Runtime(sizes_ref)) = &self.config.sizes {
@@ -175,11 +234,12 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                 match &sizes_arg.ty {
                     ArgType::Shape(_) => {
                         let sizes_name = arg_to_ident(sizes_arg);
-                        let target_height = target(height_pos, 2, quote! { #sizes_name }, false);
-                        let target_width = target(width_pos, 3, quote! { #sizes_name }, false);
+                        let (dims, scale, target_height, target_width) =
+                            sizes_targets(quote! { #sizes_name });
                         quote! {
                             let #output = {
-                                #sizes_input_dims
+                                #dims
+                                #scale
                                 let target_height = #target_height;
                                 let target_width = #target_width;
                                 burn::tensor::module::interpolate(
@@ -193,13 +253,14 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                     }
                     ArgType::Tensor(_) => {
                         let sizes_name = scope.arg(sizes_arg);
-                        let target_height = target(height_pos, 2, quote! { sizes_array }, false);
-                        let target_width = target(width_pos, 3, quote! { sizes_array }, false);
+                        let (dims, scale, target_height, target_width) =
+                            sizes_targets(quote! { sizes_array });
                         quote! {
                             let #output = {
-                                #sizes_input_dims
+                                #dims
                                 let sizes_data = #sizes_name.to_data().convert::<i64>();
                                 let sizes_array = sizes_data.as_slice::<i64>().unwrap();
+                                #scale
                                 let target_height = #target_height;
                                 let target_width = #target_width;
                                 burn::tensor::module::interpolate(
@@ -273,8 +334,8 @@ mod tests {
     use insta::assert_snapshot;
     use onnx_ir::ir::{DType, RuntimeInputRef};
     use onnx_ir::node::resize::{
-        CoordinateTransformMode, ResizeConfig, ResizeMode, ResizeNodeBuilder, ResizeScales,
-        ResizeSizes,
+        CoordinateTransformMode, KeepAspectRatioPolicy, ResizeConfig, ResizeMode,
+        ResizeNodeBuilder, ResizeScales, ResizeSizes,
     };
 
     // ==================== Static Resize - Rank 3 (1D) Tests ====================
@@ -889,7 +950,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @"
+        assert_snapshot!(code, @r"
         pub fn forward(&self, x: Tensor<4>, scales_tensor: Tensor<1>) -> Tensor<4> {
             let y = {
                 let input_dims = x.dims();
@@ -930,7 +991,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @"
+        assert_snapshot!(code, @r"
         pub fn forward(&self, x: Tensor<4>, sizes_tensor: Tensor<1, Int>) -> Tensor<4> {
             let y = {
                 let input_dims = x.dims();
@@ -950,6 +1011,109 @@ mod tests {
             y
         }
         ");
+    }
+
+    #[test]
+    fn test_resize_runtime_sizes_keep_aspect_ratio_not_larger_axes() {
+        // axes=[2, 3]: one scale, the min of sizes[i] / input_dims[axes[i]]
+        let config = ResizeConfig {
+            mode: ResizeMode::Nearest,
+            sizes: Some(ResizeSizes::Runtime(RuntimeInputRef {
+                name: "sizes_tensor".to_string(),
+                input_index: 1,
+            })),
+            axes: Some(vec![2, 3]),
+            keep_aspect_ratio_policy: KeepAspectRatioPolicy::NotLarger,
+            ..Default::default()
+        };
+        let node = ResizeNodeBuilder::new("aspect_op")
+            .input_tensor("x", 4, DType::F32)
+            .input_tensor("sizes_tensor", 1, DType::I64)
+            .output_tensor("y", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, x: Tensor<4>, sizes_tensor: Tensor<1, Int>) -> Tensor<4> {
+            let y = {
+                let input_dims = x.dims();
+                let sizes_data = sizes_tensor.to_data().convert::<i64>();
+                let sizes_array = sizes_data.as_slice::<i64>().unwrap();
+                let scale = [
+                    (sizes_array[0] as f64) / (input_dims[2] as f64),
+                    (sizes_array[1] as f64) / (input_dims[3] as f64),
+                ]
+                    .into_iter()
+                    .fold(f64::INFINITY, f64::min);
+                let target_height = (scale * input_dims[2] as f64 + 0.5) as usize;
+                let target_width = (scale * input_dims[3] as f64 + 0.5) as usize;
+                burn::tensor::module::interpolate(
+                    x,
+                    burn::tensor::ops::InterpolateOptions::new(
+                            burn::tensor::ops::InterpolateMode::Nearest,
+                        )
+                        .with_output_size([target_height, target_width])
+                        .with_align_corners(false),
+                )
+            };
+            y
+        }
+        ");
+    }
+
+    #[test]
+    fn test_resize_runtime_sizes_keep_aspect_ratio_not_smaller_all_axes() {
+        // Without axes all four axes are listed, so batch and channel must stay unchanged
+        let config = ResizeConfig {
+            mode: ResizeMode::Nearest,
+            sizes: Some(ResizeSizes::Runtime(RuntimeInputRef {
+                name: "sizes".to_string(),
+                input_index: 1,
+            })),
+            keep_aspect_ratio_policy: KeepAspectRatioPolicy::NotSmaller,
+            ..Default::default()
+        };
+        let node = ResizeNodeBuilder::new("aspect_op")
+            .input_tensor("x", 4, DType::F32)
+            .input_shape("sizes", 4)
+            .output_tensor("y", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, x: Tensor<4>, sizes: [i64; 4]) -> Tensor<4> {
+            let y = {
+                let input_dims = x.dims();
+                let scale = [
+                    (sizes[0] as f64) / (input_dims[0] as f64),
+                    (sizes[1] as f64) / (input_dims[1] as f64),
+                    (sizes[2] as f64) / (input_dims[2] as f64),
+                    (sizes[3] as f64) / (input_dims[3] as f64),
+                ]
+                    .into_iter()
+                    .fold(f64::NEG_INFINITY, f64::max);
+                assert!(
+                    (scale * input_dims[0] as f64 + 0.5) as usize == input_dims[0],
+                    "Resize: keep_aspect_ratio_policy would resize axis 0"
+                );
+                assert!(
+                    (scale * input_dims[1] as f64 + 0.5) as usize == input_dims[1],
+                    "Resize: keep_aspect_ratio_policy would resize axis 1"
+                );
+                let target_height = (scale * input_dims[2] as f64 + 0.5) as usize;
+                let target_width = (scale * input_dims[3] as f64 + 0.5) as usize;
+                burn::tensor::module::interpolate(
+                    x,
+                    burn::tensor::ops::InterpolateOptions::new(
+                            burn::tensor::ops::InterpolateMode::Nearest,
+                        )
+                        .with_output_size([target_height, target_width])
+                        .with_align_corners(false),
+                )
+            };
+            y
+        }
+        "#);
     }
 
     #[test]
