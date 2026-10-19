@@ -573,11 +573,15 @@ impl NodeProcessor for ResizeProcessor {
         // batch and channel sizes and takes constant sizes on the resized axes; an axis
         // that scales or runtime sizes may change becomes unknown, so later nodes (e.g. a
         // following Resize with axes or keep_aspect_ratio_policy) don't read a stale size.
+        // Without input shape metadata, constant sizes still set the resized axes.
         crate::processor::same_as_input(node);
-        if let ArgType::Tensor(output) = &mut node.outputs[0].ty
-            && let Some(shape) = output.static_shape.as_mut()
-        {
-            for (dim, size) in shape.iter_mut().enumerate().skip(2) {
+        if let ArgType::Tensor(output) = &mut node.outputs[0].ty {
+            if output.static_shape.is_none() && matches!(config.sizes, Some(ResizeSizes::Static(_)))
+            {
+                output.static_shape = Some(vec![None; output.rank]);
+            }
+            let shape = output.static_shape.iter_mut().flatten();
+            for (dim, size) in shape.enumerate().skip(2) {
                 let listed = config.axes.as_ref().is_none_or(|axes| axes.contains(&dim));
                 *size = match (&config.sizes, &config.scales) {
                     (Some(ResizeSizes::Static(sizes)), _) => sizes.get(dim - 2).copied(),
@@ -1352,6 +1356,34 @@ mod tests {
             output_static_shape(&node),
             Some(vec![Some(1), Some(1), Some(3), Some(6)])
         );
+    }
+
+    #[test]
+    fn test_resize_output_static_shape_without_input_shape() {
+        // An input without shape metadata (e.g. a GridSample output): constant sizes still
+        // set the resized axes, the batch and channel stay unknown
+        let mut node = create_aspect_node("stretch", None, vec![1, 1, 4, 2], None);
+        ResizeProcessor
+            .infer_types(&mut node, 18, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(
+            output_static_shape(&node),
+            Some(vec![None, None, Some(4), Some(2)])
+        );
+
+        // Runtime sizes give nothing to infer, so the shape stays absent
+        let mut node = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 4, None)
+            .output_tensor_f32("Y", 4, None)
+            .attr_string("mode", "nearest")
+            .input_tensor_f32("", 1, None)
+            .input_tensor_f32("", 1, None)
+            .input_tensor_i64("sizes", 1, None)
+            .build();
+        ResizeProcessor
+            .infer_types(&mut node, 18, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(output_static_shape(&node), None);
     }
 
     #[test]

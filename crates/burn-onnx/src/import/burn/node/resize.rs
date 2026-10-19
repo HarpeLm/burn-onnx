@@ -181,6 +181,8 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                     // round like the spec. Burn only resizes the spatial axes, so listed batch
                     // and channel sizes must not change. All temporaries live in the block that
                     // computes the target size, so none can shadow the input read afterwards.
+                    // burn's interpolate samples with out/in per axis, not the common scale, so
+                    // values differ from ONNX when rounding makes them differ (#546).
                     let read_sizes = match &sizes_arg.ty {
                         ArgType::Shape(_) => {
                             let sizes_name = arg_to_ident(sizes_arg);

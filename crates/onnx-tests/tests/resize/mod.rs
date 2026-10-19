@@ -15,7 +15,8 @@ include_models!(
     resize_keep_aspect_ratio_static,
     resize_keep_aspect_ratio_runtime,
     resize_keep_aspect_ratio_halfway,
-    resize_chained
+    resize_chained,
+    resize_chained_unknown_shape
 );
 
 #[cfg(test)]
@@ -547,6 +548,34 @@ mod tests {
                 [4.0, 4.0, 4.0, 6.0, 6.0],
             ]]]),
             true,
+        );
+    }
+
+    #[test]
+    fn resize_chained_after_unknown_shape() {
+        // Expected values from resize_chained_unknown_shape.py (ONNX Runtime). GridSample's
+        // output has no static shape; the stretch Resize's constant sizes [1, 1, 4, 2] must
+        // still give the following not_larger Resize its 4x2 input (6x6 -> 6x3).
+        let device = Default::default();
+        let model = resize_chained_unknown_shape::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/resize_chained_unknown_shape.bpk"),
+            &device,
+        );
+        let input =
+            Tensor::<4>::from_floats([[[[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0]]]], &device);
+
+        let output = model.forward(input);
+
+        output.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+            ]]]),
+            burn::tensor::Tolerance::default(),
         );
     }
 }
