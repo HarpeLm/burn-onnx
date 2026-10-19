@@ -13,7 +13,9 @@ include_models!(
     resize_axes_static,
     resize_axes_runtime,
     resize_keep_aspect_ratio_static,
-    resize_keep_aspect_ratio_runtime
+    resize_keep_aspect_ratio_runtime,
+    resize_keep_aspect_ratio_halfway,
+    resize_chained
 );
 
 #[cfg(test)]
@@ -488,5 +490,63 @@ mod tests {
         let sizes = Tensor::<1, burn::tensor::Int>::from_ints([1, 1, 2, 3], &device);
 
         let _ = model.forward(input, sizes);
+    }
+
+    #[test]
+    fn resize_keep_aspect_ratio_rounds_halfway_up() {
+        // Expected shapes from resize_keep_aspect_ratio_halfway.py (ONNX Runtime). not_larger
+        // with sizes [15, 29] on 25x50: scale 0.58 and 0.58 * 25 = 14.5 -> 15, with constant
+        // sizes (adjusted at import) and runtime sizes (adjusted in forward).
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_halfway::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_halfway.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::zeros([1, 1, 25, 50], &device);
+        let sizes = Tensor::<1, burn::tensor::Int>::from_ints([15, 29], &device);
+
+        let (y_static, y_runtime) = model.forward(input, sizes);
+
+        assert_eq!(y_static.dims(), [1, 1, 15, 29]);
+        assert_eq!(y_runtime.dims(), [1, 1, 15, 29]);
+    }
+
+    #[test]
+    fn resize_chained_reads_the_resized_shape() {
+        // Expected values from resize_chained.py (ONNX Runtime). A stretch Resize turns 2x4
+        // into 4x2; the following Resizes must use 4x2, not the original 2x4 (3x6 and 2x5).
+        let device = Default::default();
+        let model = resize_chained::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/resize_chained.bpk"),
+            &device,
+        );
+        let input =
+            Tensor::<4>::from_floats([[[[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0]]]], &device);
+
+        let (y_not_larger, y_axes) = model.forward(input);
+
+        y_not_larger.to_data().assert_eq(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+            ]]]),
+            true,
+        );
+        y_axes.to_data().assert_eq(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 0.0, 2.0, 2.0],
+                [0.0, 0.0, 0.0, 2.0, 2.0],
+                [4.0, 4.0, 4.0, 6.0, 6.0],
+                [4.0, 4.0, 4.0, 6.0, 6.0],
+            ]]]),
+            true,
+        );
     }
 }

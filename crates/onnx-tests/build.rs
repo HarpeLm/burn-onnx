@@ -557,6 +557,8 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/resize/resize_2d_nearest_scale.onnx")
         .input("tests/resize/resize_axes_runtime.onnx")
         .input("tests/resize/resize_axes_static.onnx")
+        .input("tests/resize/resize_chained.onnx")
+        .input("tests/resize/resize_keep_aspect_ratio_halfway.onnx")
         .input("tests/resize/resize_keep_aspect_ratio_runtime.onnx")
         .input("tests/resize/resize_keep_aspect_ratio_static.onnx")
         .input("tests/resize/resize_with_scales_tensor.onnx")

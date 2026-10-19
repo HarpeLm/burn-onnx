@@ -429,18 +429,32 @@ fn keep_aspect_ratio_sizes(
         })
         .collect::<Result<Vec<usize>, _>>()?;
 
+    // The scale is kept as the exact ratio sizes[i] / input_sizes[i] (num / den): ratios are
+    // compared by cross-multiplying, and scale * in_size is rounded half up in integers, so
+    // halfway cases aren't lost to float error (0.58 * 25 is 14.499999999999998 in f64).
     let ratios = sizes
         .iter()
         .zip(&input_sizes)
-        .map(|(&size, &in_size)| size as f64 / in_size as f64);
-    let scale = match policy {
-        KeepAspectRatioPolicy::NotLarger => ratios.fold(f64::INFINITY, f64::min),
-        _ => ratios.fold(f64::NEG_INFINITY, f64::max),
-    };
+        .map(|(&size, &in_size)| (i128::from(size), in_size as i128));
+    let (num, den) = ratios
+        .reduce(|a, b| {
+            let a_is_smaller = a.0 * b.1 <= b.0 * a.1;
+            match policy {
+                KeepAspectRatioPolicy::NotLarger if a_is_smaller => a,
+                KeepAspectRatioPolicy::NotSmaller if !a_is_smaller => a,
+                _ => b,
+            }
+        })
+        .ok_or_else(|| ProcessError::Custom("Resize: sizes is empty".to_string()))?;
+    if den == 0 {
+        return Err(ProcessError::Custom(format!(
+            "Resize: keep_aspect_ratio_policy {policy:?} cannot scale an axis of size 0"
+        )));
+    }
 
     let adjusted: Vec<i64> = input_sizes
         .iter()
-        .map(|&in_size| (scale * in_size as f64 + 0.5).floor() as i64)
+        .map(|&in_size| ((2 * num * in_size as i128 + den).div_euclid(2 * den)) as i64)
         .collect();
     // Resize only scales the spatial dims, so the batch and channel sizes must not change
     for (&dim, (&size, &in_size)) in dims.iter().zip(adjusted.iter().zip(&input_sizes)) {
@@ -555,8 +569,28 @@ impl NodeProcessor for ResizeProcessor {
             _ => {}
         }
 
-        // Infer output type
+        // Infer output type: same dtype and rank as the input. The static shape keeps the
+        // batch and channel sizes and takes constant sizes on the resized axes; an axis
+        // that scales or runtime sizes may change becomes unknown, so later nodes (e.g. a
+        // following Resize with axes or keep_aspect_ratio_policy) don't read a stale size.
         crate::processor::same_as_input(node);
+        if let ArgType::Tensor(output) = &mut node.outputs[0].ty
+            && let Some(shape) = output.static_shape.as_mut()
+        {
+            for (dim, size) in shape.iter_mut().enumerate().skip(2) {
+                let listed = config.axes.as_ref().is_none_or(|axes| axes.contains(&dim));
+                *size = match (&config.sizes, &config.scales) {
+                    (Some(ResizeSizes::Static(sizes)), _) => sizes.get(dim - 2).copied(),
+                    (_, Some(ResizeScales::Static(scales)))
+                        if scales.get(dim - 2) == Some(&1.0) =>
+                    {
+                        *size
+                    }
+                    _ if !listed => *size,
+                    _ => None,
+                };
+            }
+        }
 
         Ok(())
     }
@@ -1240,6 +1274,120 @@ mod tests {
         assert!(
             matches!(&err, ProcessError::InvalidAttribute { name, .. } if name == "keep_aspect_ratio_policy"),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn test_resize_keep_aspect_ratio_rounds_halfway_up() {
+        // in 25x50, sizes [15, 29]: scale = min(0.6, 0.58) = 0.58, 0.58 * 25 = 14.5 -> 15.
+        // In f64, 29.0 / 50.0 * 25.0 is 14.499999999999998, which would round to 14.
+        let node = create_aspect_node(
+            "not_larger",
+            Some(vec![2, 3]),
+            vec![15, 29],
+            Some(vec![1, 1, 25, 50]),
+        );
+        let config = ResizeProcessor.extract_config(&node, 18).unwrap();
+        assert_eq!(static_sizes(&config), vec![15, 29]);
+
+        // in 15x6, sizes [42, 49]: scale = max(2.8, 49/6) = 49/6, 49/6 * 15 = 122.5 -> 123
+        let node = create_aspect_node(
+            "not_smaller",
+            Some(vec![2, 3]),
+            vec![42, 49],
+            Some(vec![1, 1, 15, 6]),
+        );
+        let config = ResizeProcessor.extract_config(&node, 18).unwrap();
+        assert_eq!(static_sizes(&config), vec![123, 49]);
+    }
+
+    #[test]
+    fn test_resize_keep_aspect_ratio_rejects_zero_size_axis() {
+        // not_smaller picks sizes[0] / 0, an infinite scale
+        let node = create_aspect_node(
+            "not_smaller",
+            Some(vec![2, 3]),
+            vec![3, 3],
+            Some(vec![1, 1, 0, 4]),
+        );
+        let err = ResizeProcessor.extract_config(&node, 18).unwrap_err();
+        assert!(
+            matches!(&err, ProcessError::Custom(msg) if msg.contains("cannot scale an axis of size 0")),
+            "{err}"
+        );
+    }
+
+    fn output_static_shape(node: &RawNode) -> Option<Vec<Option<usize>>> {
+        match &node.outputs[0].ty {
+            ArgType::Tensor(tensor) => tensor.static_shape.clone(),
+            other => panic!("Expected a tensor output, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_resize_output_static_shape_takes_constant_sizes() {
+        // A stretch Resize from 2x4 to 4x2 must not report its input shape: a following
+        // Resize with keep_aspect_ratio_policy or axes reads it
+        let mut node =
+            create_aspect_node("stretch", None, vec![1, 1, 4, 2], Some(vec![1, 1, 2, 4]));
+        ResizeProcessor
+            .infer_types(&mut node, 18, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(
+            output_static_shape(&node),
+            Some(vec![Some(1), Some(1), Some(4), Some(2)])
+        );
+
+        // keep_aspect_ratio_policy: 2x4 with sizes [6, 6] -> scale min(3, 1.5) -> 3x6
+        let mut node = create_aspect_node(
+            "not_larger",
+            Some(vec![2, 3]),
+            vec![6, 6],
+            Some(vec![1, 1, 2, 4]),
+        );
+        ResizeProcessor
+            .infer_types(&mut node, 18, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(
+            output_static_shape(&node),
+            Some(vec![Some(1), Some(1), Some(3), Some(6)])
+        );
+    }
+
+    #[test]
+    fn test_resize_output_static_shape_unknown_where_resized_at_runtime() {
+        // Runtime sizes on axes [3]: the width is unknown, the unlisted height is kept
+        let mut node = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 4, Some(vec![1, 3, 2, 4]))
+            .output_tensor_f32("Y", 4, None)
+            .attr_string("mode", "nearest")
+            .attr_ints("axes", vec![3])
+            .input_tensor_f32("", 1, None)
+            .input_tensor_f32("", 1, None)
+            .input_tensor_i64("sizes", 1, None)
+            .build();
+        ResizeProcessor
+            .infer_types(&mut node, 18, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(
+            output_static_shape(&node),
+            Some(vec![Some(1), Some(3), Some(2), None])
+        );
+
+        // Constant scales [1, 1, 1, 2]: a scale of 1 keeps the size, the others are unknown
+        let mut node = TestNodeBuilder::new(NodeType::Resize, "test_resize")
+            .input_tensor_f32("X", 4, Some(vec![1, 3, 2, 4]))
+            .output_tensor_f32("Y", 4, None)
+            .attr_string("mode", "nearest")
+            .input_tensor_f32("", 1, None)
+            .input_tensor_f32_data("scales", vec![1.0, 1.0, 1.0, 2.0], vec![4])
+            .build_with_graph_data(18);
+        ResizeProcessor
+            .infer_types(&mut node, 18, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(
+            output_static_shape(&node),
+            Some(vec![Some(1), Some(3), Some(2), None])
         );
     }
 
