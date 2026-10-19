@@ -1495,7 +1495,7 @@ fn resize(graph: &OnnxGraph) {
         _: F32[0] [static(28)]
         _: I64[4] [static(29)]
       Outputs:
-        resize1_out1: F32[1, 1, 2, 2]
+        resize1_out1: F32[1, 1, 4, 4]
       Config:
         ResizeConfig {
             mode: Nearest,
@@ -1515,6 +1515,7 @@ fn resize(graph: &OnnxGraph) {
             extrapolation_value: 0.0,
             antialias: 0,
             axes: None,
+            keep_aspect_ratio_policy: Stretch,
         }
     "#);
 }

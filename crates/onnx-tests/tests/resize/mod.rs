@@ -11,7 +11,12 @@ include_models!(
     resize_with_sizes_tensor,
     resize_with_scales_tensor,
     resize_axes_static,
-    resize_axes_runtime
+    resize_axes_runtime,
+    resize_keep_aspect_ratio_static,
+    resize_keep_aspect_ratio_runtime,
+    resize_keep_aspect_ratio_halfway,
+    resize_chained,
+    resize_chained_unknown_shape
 );
 
 #[cfg(test)]
@@ -412,6 +417,165 @@ mod tests {
                 [2.0, 2.0, 2.0, 3.0, 3.0, 3.0],
             ]]]),
             true,
+        );
+    }
+
+    #[test]
+    fn resize_keep_aspect_ratio_static() {
+        // Expected values from resize_keep_aspect_ratio_static.py (ONNX Runtime). Constant sizes
+        // [7, 8] on a 2x2 input: not_larger -> 7x7, not_smaller -> 8x8 (adjusted at import).
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_static::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_static.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
+
+        let (not_larger, not_smaller) = model.forward(input);
+
+        // Rows/columns 0..4 come from the first input row/column, the rest from the second
+        let expected = |n: usize, split: usize| {
+            let mut values = Vec::with_capacity(n * n);
+            for row in 0..n {
+                for col in 0..n {
+                    let top = if row < split { 0.0f32 } else { 2.0 };
+                    let left = if col < split { 1.0 } else { 2.0 };
+                    values.push(top + left);
+                }
+            }
+            TensorData::new(values, [1, 1, n, n])
+        };
+        not_larger.to_data().assert_eq(&expected(7, 4), true);
+        not_smaller.to_data().assert_eq(&expected(8, 4), true);
+    }
+
+    #[test]
+    fn resize_keep_aspect_ratio_runtime_keeps_batch_and_channel() {
+        // Expected values from resize_keep_aspect_ratio_runtime.py (ONNX Runtime). Without axes
+        // every axis is listed: sizes [1, 1, 1, 2] -> scale max(1, 1, 0.5, 1) = 1, size unchanged.
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_runtime::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_runtime.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
+        let sizes = Tensor::<1, burn::tensor::Int>::from_ints([1, 1, 1, 2], &device);
+
+        let output = model.forward(input, sizes);
+
+        output
+            .to_data()
+            .assert_eq(&TensorData::from([[[[1.0f32, 2.0], [3.0, 4.0]]]]), true);
+    }
+
+    #[test]
+    #[should_panic(expected = "Resize: keep_aspect_ratio_policy would resize axis 0")]
+    fn resize_keep_aspect_ratio_runtime_rejects_batch_resize() {
+        // sizes [1, 1, 2, 3] -> scale 1.5, which would resize the batch axis (ONNX Runtime
+        // outputs 2x2x3x3); burn only resizes spatial axes, so this stops with a clear message.
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_runtime::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_runtime.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::from_floats([[[[1.0, 2.0], [3.0, 4.0]]]], &device);
+        let sizes = Tensor::<1, burn::tensor::Int>::from_ints([1, 1, 2, 3], &device);
+
+        let _ = model.forward(input, sizes);
+    }
+
+    #[test]
+    fn resize_keep_aspect_ratio_rounds_halfway_up() {
+        // Expected shapes from resize_keep_aspect_ratio_halfway.py (ONNX Runtime). not_larger
+        // with sizes [15, 29] on 25x50: scale 0.58 and 0.58 * 25 = 14.5 -> 15, with constant
+        // sizes (adjusted at import) and runtime sizes (adjusted in forward).
+        let device = Default::default();
+        let model = resize_keep_aspect_ratio_halfway::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/resize_keep_aspect_ratio_halfway.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<4>::zeros([1, 1, 25, 50], &device);
+        let sizes = Tensor::<1, burn::tensor::Int>::from_ints([15, 29], &device);
+
+        let (y_static, y_runtime) = model.forward(input, sizes);
+
+        assert_eq!(y_static.dims(), [1, 1, 15, 29]);
+        assert_eq!(y_runtime.dims(), [1, 1, 15, 29]);
+    }
+
+    #[test]
+    fn resize_chained_reads_the_resized_shape() {
+        // Expected values from resize_chained.py (ONNX Runtime). A stretch Resize turns 2x4
+        // into 4x2; the following Resizes must use 4x2, not the original 2x4 (3x6 and 2x5).
+        let device = Default::default();
+        let model = resize_chained::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/resize_chained.bpk"),
+            &device,
+        );
+        let input =
+            Tensor::<4>::from_floats([[[[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0]]]], &device);
+
+        let (y_not_larger, y_axes) = model.forward(input);
+
+        y_not_larger.to_data().assert_eq(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+            ]]]),
+            true,
+        );
+        y_axes.to_data().assert_eq(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 0.0, 2.0, 2.0],
+                [0.0, 0.0, 0.0, 2.0, 2.0],
+                [4.0, 4.0, 4.0, 6.0, 6.0],
+                [4.0, 4.0, 4.0, 6.0, 6.0],
+            ]]]),
+            true,
+        );
+    }
+
+    #[test]
+    fn resize_chained_after_unknown_shape() {
+        // Expected values from resize_chained_unknown_shape.py (ONNX Runtime). GridSample's
+        // output has no static shape; the stretch Resize's constant sizes [1, 1, 4, 2] must
+        // still give the following not_larger Resize its 4x2 input (6x6 -> 6x3).
+        let device = Default::default();
+        let model = resize_chained_unknown_shape::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/resize_chained_unknown_shape.bpk"),
+            &device,
+        );
+        let input =
+            Tensor::<4>::from_floats([[[[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0]]]], &device);
+
+        let output = model.forward(input);
+
+        output.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[[
+                [0.0f32, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [0.0, 0.0, 2.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+                [4.0, 4.0, 6.0],
+            ]]]),
+            burn::tensor::Tolerance::default(),
         );
     }
 }
