@@ -31,4 +31,5 @@ mod opset_compliance {
     mod opset_22;
     mod opset_23;
     mod opset_24;
+    mod opset_26;
 }

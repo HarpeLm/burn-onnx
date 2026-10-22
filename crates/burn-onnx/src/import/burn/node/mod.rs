@@ -58,6 +58,7 @@ pub(crate) mod conv_transpose_2d;
 pub(crate) mod conv_transpose_3d;
 pub(crate) mod cos;
 pub(crate) mod cosh;
+pub(crate) mod cumprod;
 pub(crate) mod cumsum;
 pub(crate) mod deform_conv;
 pub(crate) mod depth_to_space;

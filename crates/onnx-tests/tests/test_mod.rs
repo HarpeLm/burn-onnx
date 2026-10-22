@@ -50,6 +50,7 @@ pub mod conv_transpose;
 pub mod conv_transpose_auto_pad;
 pub mod cos;
 pub mod cosh;
+pub mod cumprod;
 pub mod cumsum;
 pub mod custom_ops;
 pub mod deform_conv;

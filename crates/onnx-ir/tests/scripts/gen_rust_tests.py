@@ -177,6 +177,7 @@ MIN_OPSET = {
     "IsInf": 10,
     "IsNaN": 9,
     "Trilu": 14,
+    "CumProd": 26,
     "CumSum": 11,
     "EyeLike": 9,
     "Range": 11,

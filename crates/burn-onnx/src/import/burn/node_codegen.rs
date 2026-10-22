@@ -327,6 +327,7 @@ impl_node_codegen_dispatch! {
     Cast,
     CastLike,
     Clip,
+    CumProd,
     CumSum,
     Dropout,
     Where,

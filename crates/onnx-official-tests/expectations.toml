@@ -1914,40 +1914,31 @@ status = "pass"
 status = "pass"
 
 [test_cumprod_1d]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_1d_exclusive]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_1d_int32_exclusive]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_1d_reverse]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_1d_reverse_exclusive]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_2d_axis_0]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_2d_axis_1]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_2d_int32]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumprod_2d_negative_axis]
-status = "skip-codegen"
-reason = "model contains 1 custom op(s) with no covering inference hook: - CumProd used by 1 node(s) Register hooks via ModelGen::register_custom_op."
+status = "pass"
 
 [test_cumsum_1d]
 status = "pass"
