@@ -1,5 +1,10 @@
 use crate::include_models;
-include_models!(cumprod_runtime_axis, cumprod_int32);
+include_models!(
+    cumprod_runtime_axis,
+    cumprod_int32,
+    cumprod_computed_axis,
+    cumprod_shape
+);
 
 #[cfg(test)]
 mod tests {
@@ -87,5 +92,59 @@ mod tests {
         y_exclusive_reverse
             .to_data()
             .assert_eq(&TensorData::from([[12i32, 4, 1], [10, 2, 1]]), true);
+    }
+
+    #[test]
+    fn cumprod_computed_axis() {
+        // Expected values from cumprod_computed_axis.py (ONNX reference). The axis is an
+        // ArgMax with keepdims=0, a scalar on the device.
+        let device = Default::default();
+        let model = cumprod_computed_axis::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/cumprod_computed_axis.bpk"),
+            &device,
+        );
+
+        // ArgMax = 1: reverse cumprod along the rows
+        let selector = Tensor::<1>::from_floats([0., 5.], &device);
+        let output = model.forward(input(&device), selector);
+        output
+            .to_data()
+            .assert_eq(&TensorData::from([[6f32, 6., 3.], [120., 30., 6.]]), true);
+
+        // ArgMax = 0: reverse cumprod along the columns
+        let selector = Tensor::<1>::from_floats([5., 0.], &device);
+        let output = model.forward(input(&device), selector);
+        output
+            .to_data()
+            .assert_eq(&TensorData::from([[4f32, 10., 18.], [4., 5., 6.]]), true);
+    }
+
+    #[test]
+    fn cumprod_shape_input() {
+        // Expected values from cumprod_shape.py (ONNX reference). The data is the Shape of an
+        // input with dynamic dimensions: constant axis 0, then runtime axis -1 with exclusive
+        // and reverse.
+        let device = Default::default();
+        let model = cumprod_shape::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/cumprod_shape.bpk"),
+            &device,
+        );
+        let x = Tensor::<3>::zeros([2, 3, 4], &device);
+
+        let (y, y_exclusive_reverse) = model.forward(x, -1);
+
+        assert_eq!(y, [2, 6, 24]);
+        assert_eq!(y_exclusive_reverse, [12, 4, 1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "CumProd: axis 1 is out of range for a rank-1 input")]
+    fn cumprod_shape_input_axis_out_of_range() {
+        let device = Default::default();
+        let model = cumprod_shape::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/cumprod_shape.bpk"),
+            &device,
+        );
+        let _ = model.forward(Tensor::<3>::zeros([2, 3, 4], &device), 1);
     }
 }

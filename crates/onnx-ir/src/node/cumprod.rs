@@ -98,12 +98,14 @@ impl NodeProcessor for CumProdProcessor {
                     axis_vec[0]
                 };
 
-                // Get tensor rank for negative axis handling
-                let tensor = match &node.inputs[0].ty {
-                    ArgType::Tensor(t) => t,
+                // Rank for negative axis handling. A Shape input (e.g. from a Shape node) is
+                // a rank-1 vector of int64.
+                let rank = match &node.inputs[0].ty {
+                    ArgType::Tensor(t) => t.rank,
+                    ArgType::Shape(_) => 1,
                     _ => {
                         return Err(ProcessError::TypeMismatch {
-                            expected: "Tensor".to_string(),
+                            expected: "Tensor or Shape".to_string(),
                             actual: format!("{:?}", node.inputs[0].ty),
                         });
                     }
@@ -111,16 +113,16 @@ impl NodeProcessor for CumProdProcessor {
 
                 // Handle negative axis
                 let axis_normalized = if axis_value < 0 {
-                    (tensor.rank as i64 + axis_value) as usize
+                    (rank as i64 + axis_value) as usize
                 } else {
                     axis_value as usize
                 };
 
                 // Validate axis
-                if axis_normalized >= tensor.rank {
+                if axis_normalized >= rank {
                     return Err(ProcessError::Custom(format!(
                         "CumProd: axis {} is out of bounds for tensor of rank {}",
-                        axis_value, tensor.rank
+                        axis_value, rank
                     )));
                 }
 
@@ -229,6 +231,32 @@ mod tests {
         let processor = CumProdProcessor;
         let config = processor.extract_config(&node, 26).unwrap();
         assert!(matches!(config.axis, CumProdAxis::Static(2))); // -1 + 3 = 2
+    }
+
+    #[test]
+    fn test_cumprod_shape_input() {
+        // A Shape input (e.g. from a Shape node) is a rank-1 int64 vector: -1 is axis 0, and
+        // the output keeps the Shape type
+        let mut node = TestNodeBuilder::new(NodeType::CumProd, "test_cumprod_shape")
+            .input_shape("x", 3)
+            .input_tensor_i64_data("axis", vec![-1], vec![])
+            .output_tensor_i64("y", 1, None)
+            .build_with_graph_data(26);
+        let processor = CumProdProcessor;
+        let config = processor.extract_config(&node, 26).unwrap();
+        assert!(matches!(config.axis, CumProdAxis::Static(0)));
+        processor
+            .infer_types(&mut node, 26, &OutputPreferences::new())
+            .unwrap();
+        assert!(matches!(node.outputs[0].ty, ArgType::Shape(3)));
+
+        // Axis 1 is out of range for a rank-1 Shape
+        let node = TestNodeBuilder::new(NodeType::CumProd, "test_cumprod_shape")
+            .input_shape("x", 3)
+            .input_tensor_i64_data("axis", vec![1], vec![])
+            .output_tensor_i64("y", 1, None)
+            .build_with_graph_data(26);
+        assert!(processor.extract_config(&node, 26).is_err());
     }
 
     fn create_runtime_cumprod_node() -> RawNode {

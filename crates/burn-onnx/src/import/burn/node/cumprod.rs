@@ -22,23 +22,45 @@ impl NodeCodegen for onnx_ir::cumprod::CumProdNode {
         let exclusive = self.config.exclusive;
         let reverse = self.config.reverse;
 
+        let shape_len = match &self.inputs[0].ty {
+            ArgType::Shape(len) => Some(*len),
+            _ => None,
+        };
         match &self.config.axis {
-            CumProdAxis::Static(axis) => {
-                generate_static_cumprod(&input, &output, *axis, exclusive, reverse)
-            }
+            CumProdAxis::Static(axis) => match shape_len {
+                // A Shape input is a host [i64; N] array: compute on the host
+                Some(len) => generate_shape_cumprod(&input, &output, len, None, exclusive, reverse),
+                None => generate_static_cumprod(&input, &output, *axis, exclusive, reverse),
+            },
             CumProdAxis::Runtime(_) => {
-                let axis_input = arg_to_ident(&self.inputs[1]);
-                // Check if axis is a scalar or a shape array
-                let axis_is_scalar = matches!(&self.inputs[1].ty, ArgType::ScalarNative(_));
-                generate_runtime_cumprod(
-                    &input,
-                    &output,
-                    &axis_input,
-                    self.inputs[0].ty.rank(),
-                    exclusive,
-                    reverse,
-                    axis_is_scalar,
-                )
+                // The axis as an i64 expression: a native scalar, a device scalar (e.g. a
+                // computed ArgMax), or a one-element Shape
+                let axis_arg = &self.inputs[1];
+                let axis_value = match &axis_arg.ty {
+                    ArgType::Shape(_) => {
+                        let axis = arg_to_ident(axis_arg);
+                        quote! { #axis[0] as i64 }
+                    }
+                    _ => scalar_as_i64(axis_arg, scope.arg(axis_arg)),
+                };
+                match shape_len {
+                    Some(len) => generate_shape_cumprod(
+                        &input,
+                        &output,
+                        len,
+                        Some(axis_value),
+                        exclusive,
+                        reverse,
+                    ),
+                    None => generate_runtime_cumprod(
+                        &input,
+                        &output,
+                        axis_value,
+                        self.inputs[0].ty.rank(),
+                        exclusive,
+                        reverse,
+                    ),
+                }
             }
         }
     }
@@ -115,22 +137,68 @@ fn generate_static_cumprod(
     }
 }
 
+/// Generate code for a Shape input (a host `[i64; len]` array, logically rank 1): the
+/// product runs on the host, with wrapping arithmetic like integer tensors. The only valid
+/// axis is 0 (or -1).
+fn generate_shape_cumprod(
+    input: &TokenStream,
+    output: &syn::Ident,
+    len: usize,
+    runtime_axis: Option<TokenStream>,
+    exclusive: bool,
+    reverse: bool,
+) -> TokenStream {
+    let len = len.to_tokens();
+    let indices = if reverse {
+        quote! { (0..#len).rev() }
+    } else {
+        quote! { 0..#len }
+    };
+    let step = if exclusive {
+        quote! {
+            output[i] = product;
+            product = product.wrapping_mul(input[i]);
+        }
+    } else {
+        quote! {
+            product = product.wrapping_mul(input[i]);
+            output[i] = product;
+        }
+    };
+    // Both graph values are read before any temporary is declared
+    let read_inputs = match runtime_axis {
+        Some(axis_value) => quote! {
+            let (input, axis): ([i64; #len], i64) = (#input, #axis_value);
+            assert!(
+                (-1..1).contains(&axis),
+                "CumProd: axis {} is out of range for a rank-1 input", axis
+            );
+        },
+        None => quote! { let input: [i64; #len] = #input; },
+    };
+    quote! {
+        let #output: [i64; #len] = {
+            #read_inputs
+            let mut output = [0i64; #len];
+            let mut product = 1i64;
+            for i in #indices {
+                #step
+            }
+            output
+        };
+    }
+}
+
 /// Generate code for runtime axis. A negative axis counts from the end, so it is normalized
 /// against the input rank (known at codegen time) before it reaches shape, flip and narrow.
 fn generate_runtime_cumprod(
     input: &TokenStream,
     output: &syn::Ident,
-    axis_input: &syn::Ident,
+    axis_value: TokenStream,
     rank: usize,
     exclusive: bool,
     reverse: bool,
-    axis_is_scalar: bool,
 ) -> TokenStream {
-    let axis_value = if axis_is_scalar {
-        quote! { #axis_input as i64 }
-    } else {
-        quote! { #axis_input[0] as i64 }
-    };
     let rank = proc_macro2::Literal::i64_unsuffixed(rank as i64);
     // Both graph values are read before any temporary is declared, so none can shadow them
     let read_inputs = quote! {
@@ -456,7 +524,7 @@ mod tests {
         assert_snapshot!(code, @r#"
         pub fn forward(&self, input: Tensor<2>, axis: i64) -> Tensor<2> {
             let output = {
-                let (input, axis) = (input, axis as i64);
+                let (input, axis) = (input, axis);
                 assert!(
                     (- 2..2).contains(& axis),
                     "CumProd: axis {} is out of range for a rank-{} input", axis, 2
@@ -497,6 +565,116 @@ mod tests {
                 "input named {temporary}"
             );
             let as_axis = create_scalar_axis_node("data", temporary);
+            assert_eq!(
+                shadow_check_result(&as_axis),
+                Ok(()),
+                "axis named {temporary}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cumprod_runtime_scalar_tensor_axis() {
+        // A computed axis (e.g. ArgMax with keepdims=0) is a scalar on the device
+        let config = CumProdConfig::new(
+            CumProdAxis::Runtime(RuntimeInputRef::new("axis".to_string(), 1)),
+            false,
+            false,
+        );
+        let node = CumProdNodeBuilder::new("cumprod1")
+            .input_tensor("input", 2, DType::F32)
+            .input_scalar_tensor("axis", DType::I64)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<2>, axis: Tensor<1, Int>) -> Tensor<2> {
+            let output = {
+                let (input, axis) = (input, (axis).into_scalar::<i64>());
+                assert!(
+                    (- 2..2).contains(& axis),
+                    "CumProd: axis {} is out of range for a rank-{} input", axis, 2
+                );
+                let axis = axis.rem_euclid(2) as usize;
+                input.cumprod(axis)
+            };
+            output
+        }
+        "#);
+    }
+
+    fn create_shape_node(input: &str, axis: Option<&str>) -> CumProdNode {
+        let axis_config = match axis {
+            Some(axis) => CumProdAxis::Runtime(RuntimeInputRef::new(axis.to_string(), 1)),
+            None => CumProdAxis::Static(0),
+        };
+        let builder = CumProdNodeBuilder::new("cumprod1").input_shape(input, 3);
+        let builder = match axis {
+            Some(axis) => builder.input_scalar(axis, DType::I64),
+            None => builder,
+        };
+        builder
+            .output_shape("output", 3)
+            .config(CumProdConfig::new(axis_config, true, true))
+            .build()
+    }
+
+    #[test]
+    fn test_cumprod_shape_input_static_axis() {
+        // A Shape input is a host [i64; N] array, so the product runs on the host
+        let code = codegen_forward_default(&create_shape_node("shape", None));
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, shape: [i64; 3]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let input: [i64; 3] = shape;
+                let mut output = [0i64; 3];
+                let mut product = 1i64;
+                for i in (0..3).rev() {
+                    output[i] = product;
+                    product = product.wrapping_mul(input[i]);
+                }
+                output
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_cumprod_shape_input_runtime_axis() {
+        let code = codegen_forward_default(&create_shape_node("shape", Some("axis")));
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, shape: [i64; 3], axis: i64) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (input, axis): ([i64; 3], i64) = (shape, axis);
+                assert!(
+                    (- 1..1).contains(& axis),
+                    "CumProd: axis {} is out of range for a rank-1 input", axis
+                );
+                let mut output = [0i64; 3];
+                let mut product = 1i64;
+                for i in (0..3).rev() {
+                    output[i] = product;
+                    product = product.wrapping_mul(input[i]);
+                }
+                output
+            };
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn shape_inputs_named_like_its_temporaries_are_accepted() {
+        for temporary in ["input", "axis", "output", "product", "i"] {
+            let as_input = create_shape_node(temporary, Some("axis_value"));
+            assert_eq!(
+                shadow_check_result(&as_input),
+                Ok(()),
+                "input named {temporary}"
+            );
+            let as_axis = create_shape_node("data", Some(temporary));
             assert_eq!(
                 shadow_check_result(&as_axis),
                 Ok(()),
