@@ -81,6 +81,7 @@ pub mod conv3d;
 pub mod conv_transpose1d;
 pub mod conv_transpose2d;
 pub mod conv_transpose3d;
+pub mod cumprod;
 pub mod cumsum;
 pub mod custom;
 pub mod deform_conv;

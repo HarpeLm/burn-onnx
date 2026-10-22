@@ -22,3 +22,4 @@
 22:Acos,Acosh,Asin,Asinh,Atan,Atanh,AveragePool,AveragePool1d,AveragePool3d,Bernoulli,Conv,Conv1d,Conv3d,ConvTranspose,ConvTranspose1d,ConvTranspose3d,Cos,Cosh,DeformConv,Det,Dropout,Elu,EyeLike,GRU,GlobalAveragePool,GlobalLpPool,GlobalMaxPool,GridSample,HardSigmoid,HardSwish,InstanceNormalization,LSTM,LpNormalization,LpPool,LpPool1d,MaxPool,MaxPool1d,MaxPool3d,Mish,RNN,RandomNormal,RandomNormalLike,RandomUniform,RandomUniformLike,Round,Selu,Sin,Sinh,Softplus,Softsign,Tan,ThresholdedRelu|
 23:Attention,Cast,CastLike,Constant,ConstantOfShape,DequantizeLinear,Flatten,Identity,If,Loop,Pad,QuantizeLinear,Reshape,Scan,Shape,Size,Squeeze,Transpose,Unsqueeze|
 24:Attention,Cast,CastLike,Constant,ConstantOfShape,DequantizeLinear,Flatten,Identity,If,Loop,Pad,QuantizeLinear,Reshape,Scan,Shape,Size,Squeeze,Swish,TopK,Transpose,Unsqueeze|
+26:CumProd|

@@ -312,6 +312,10 @@ impl ProcessorRegistry {
             NodeType::CumSum,
             Box::new(crate::node::cumsum::CumSumProcessor),
         );
+        registry.register(
+            NodeType::CumProd,
+            Box::new(crate::node::cumprod::CumProdProcessor),
+        );
 
         // Convolution operations
         registry.register(

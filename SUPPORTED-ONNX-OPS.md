@@ -58,6 +58,7 @@ as `com.microsoft`, can still be imported by registering a custom op hook; see
 | [ConvTranspose3d][38]            | ✅             | ✅           |
 | [Cos][39]                        | ✅             | ✅           |
 | [Cosh][40]                       | ✅             | ✅           |
+| [CumProd][209]                   | ✅             | ✅           |
 | [CumSum][41]                     | ✅             | ✅           |
 | [DeformConv][196]                | ✅             | ✅           |
 | [DepthToSpace][42]               | ✅             | ✅           |
@@ -434,6 +435,7 @@ near-zero spectral bins.
 [206]: https://onnx.ai/onnx/operators/onnx_aionnxml_Scaler.html "ONNX Scaler"
 [207]: https://onnx.ai/onnx/operators/onnx_aionnxml_SVMRegressor.html "ONNX SVMRegressor"
 [208]: https://onnx.ai/onnx/operators/onnx_aionnxml_OneHotEncoder.html "ONNX OneHotEncoder"
+[209]: https://onnx.ai/onnx/operators/onnx__CumProd.html "ONNX CumProd"
 
 ## Pattern Coalescing
 
