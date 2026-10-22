@@ -1,5 +1,6 @@
 use crate::include_models;
 include_models!(
+    scatter_elements_bool_reductions,
     scatter_elements,
     scatter_elements_axis1,
     scatter_elements_add,
@@ -498,5 +499,43 @@ mod tests {
         assert_eq!(s3, [2, 5]);
         // Runtime indices and updates, max reduction: [max(2, 7), max(3, 1)]
         assert_eq!(s4, [7, 3]);
+    }
+
+    #[test]
+    fn scatter_elements_bool_reductions() {
+        // Expected values from scatter_elements_bool_reductions.py (ONNX reference, checked
+        // against a NumPy loop and ONNX Runtime for add/mul). On bool, add/max are a logical
+        // or and mul/min a logical and; the indices repeat targets so the reduction matters.
+        let device = Default::default();
+        let model = scatter_elements_bool_reductions::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/scatter_elements_bool_reductions.bpk"
+            ),
+            &device,
+        );
+        let bools = |data: TensorData| {
+            burn::tensor::Tensor::<2, burn::tensor::Bool>::from_bool(data, &device)
+        };
+        let ints = |data: TensorData| {
+            burn::tensor::Tensor::<2, burn::tensor::Int>::from_data(data, &device)
+        };
+        let data = bools(TensorData::from([[false, true, false], [true, true, true]]));
+        let indices = ints(TensorData::from([[0i64, 0, 2], [1, 1, 2]]));
+        let updates = bools(TensorData::from([[true, true, false], [false, true, true]]));
+        let indices_small = ints(TensorData::from([[0i64, 0], [1, 1]]));
+        let updates_small = bools(TensorData::from([[true, false], [false, true]]));
+
+        let (y_add, y_mul, y_max, y_min, y_small_add, y_small_mul) =
+            model.forward(data, indices, updates, indices_small, updates_small);
+
+        let or = TensorData::from([[true, true, false], [true, true, true]]);
+        let and = TensorData::from([[false, true, false], [true, false, true]]);
+        y_add.to_data().assert_eq(&or, true);
+        y_max.to_data().assert_eq(&or, true);
+        y_small_add.to_data().assert_eq(&or, true);
+        y_mul.to_data().assert_eq(&and, true);
+        y_min.to_data().assert_eq(&and, true);
+        y_small_mul.to_data().assert_eq(&and, true);
     }
 }

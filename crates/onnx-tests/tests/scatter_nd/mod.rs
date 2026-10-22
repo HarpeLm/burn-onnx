@@ -1,5 +1,6 @@
 use crate::include_models;
 include_models!(
+    scatter_nd_bool_reductions,
     scatter_nd,
     scatter_nd_2d,
     scatter_nd_add,
@@ -134,5 +135,38 @@ mod tests {
 
         let expected = TensorData::from([false, true, false, true, false, true]);
         output.to_data().assert_eq(&expected, false);
+    }
+
+    #[test]
+    fn scatter_nd_bool_reductions() {
+        // Expected values from scatter_nd_bool_reductions.py (ONNX reference, checked against
+        // a NumPy loop and ONNX Runtime for add/mul). Index 1 is updated twice so the reduction
+        // matters.
+        let device = Default::default();
+        let model = scatter_nd_bool_reductions::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/scatter_nd_bool_reductions.bpk"),
+            &device,
+        );
+        let data = burn::tensor::Tensor::<1, burn::tensor::Bool>::from_bool(
+            TensorData::from([false, true, true, false]),
+            &device,
+        );
+        let indices = burn::tensor::Tensor::<2, burn::tensor::Int>::from_data(
+            TensorData::from([[1i64], [1], [2], [0]]),
+            &device,
+        );
+        let updates = burn::tensor::Tensor::<1, burn::tensor::Bool>::from_bool(
+            TensorData::from([false, true, false, true]),
+            &device,
+        );
+
+        let (y_add, y_mul, y_max, y_min) = model.forward(data, indices, updates);
+
+        let or = TensorData::from([true, true, true, false]);
+        let and = TensorData::from([false, false, false, false]);
+        y_add.to_data().assert_eq(&or, true);
+        y_max.to_data().assert_eq(&or, true);
+        y_mul.to_data().assert_eq(&and, true);
+        y_min.to_data().assert_eq(&and, true);
     }
 }
