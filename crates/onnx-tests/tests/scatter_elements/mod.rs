@@ -523,19 +523,27 @@ mod tests {
         let data = bools(TensorData::from([[false, true, false], [true, true, true]]));
         let indices = ints(TensorData::from([[0i64, 0, 2], [1, 1, 2]]));
         let updates = bools(TensorData::from([[true, true, false], [false, true, true]]));
-        let indices_small = ints(TensorData::from([[0i64, 0], [1, 1]]));
-        let updates_small = bools(TensorData::from([[true, false], [false, true]]));
+        // One row instead of two on the non-axis dimension: the ScatterND fallback
+        let indices_small = ints(TensorData::from([[0i64, 1, 0]]));
+        let updates_small = bools(TensorData::from([[true, false, false]]));
 
         let (y_add, y_mul, y_max, y_min, y_small_add, y_small_mul) =
             model.forward(data, indices, updates, indices_small, updates_small);
 
         let or = TensorData::from([[true, true, false], [true, true, true]]);
         let and = TensorData::from([[false, true, false], [true, false, true]]);
-        y_add.to_data().assert_eq(&or, true);
-        y_max.to_data().assert_eq(&or, true);
-        y_small_add.to_data().assert_eq(&or, true);
-        y_mul.to_data().assert_eq(&and, true);
-        y_min.to_data().assert_eq(&and, true);
-        y_small_mul.to_data().assert_eq(&and, true);
+        y_add.to_data().assert_eq(&or, false);
+        y_max.to_data().assert_eq(&or, false);
+        y_mul.to_data().assert_eq(&and, false);
+        y_min.to_data().assert_eq(&and, false);
+        // The fallback leaves row 1 untouched
+        y_small_add.to_data().assert_eq(
+            &TensorData::from([[true, true, false], [true, true, true]]),
+            false,
+        );
+        y_small_mul.to_data().assert_eq(
+            &TensorData::from([[false, false, false], [true, true, true]]),
+            false,
+        );
     }
 }

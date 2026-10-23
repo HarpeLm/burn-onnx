@@ -13,7 +13,8 @@
 # ScatterElements (axis 1) on bool data with every reduction. On bool, add and max are a
 # logical or, mul and min a logical and (NumPy semantics). The indices repeat targets so
 # the reduction matters. indices/updates match the data on the non-axis dimension (burn's
-# native scatter); indices_small/updates_small are smaller (the ScatterND fallback).
+# native scatter); indices_small/updates_small have 1 row instead of 2 on the non-axis
+# dimension, which selects the ScatterND fallback, and leave row 1 untouched.
 # Expected values from onnx.reference.ReferenceEvaluator (onnx 1.23.2; on 1.19 it assigned
 # for mul), checked against a NumPy loop and, for add/mul, ONNX Runtime (which rejects
 # max/min on bool).
@@ -45,8 +46,8 @@ def main():
         helper.make_tensor_value_info("data", TensorProto.BOOL, [2, 3]),
         helper.make_tensor_value_info("indices", TensorProto.INT64, [2, 3]),
         helper.make_tensor_value_info("updates", TensorProto.BOOL, [2, 3]),
-        helper.make_tensor_value_info("indices_small", TensorProto.INT64, [2, 2]),
-        helper.make_tensor_value_info("updates_small", TensorProto.BOOL, [2, 2]),
+        helper.make_tensor_value_info("indices_small", TensorProto.INT64, [1, 3]),
+        helper.make_tensor_value_info("updates_small", TensorProto.BOOL, [1, 3]),
     ]
     nodes, outputs = [], []
     for reduction in REDUCTIONS:
@@ -67,8 +68,8 @@ def main():
         "data": np.array([[False, True, False], [True, True, True]]),
         "indices": np.array([[0, 0, 2], [1, 1, 2]], dtype=np.int64),
         "updates": np.array([[True, True, False], [False, True, True]]),
-        "indices_small": np.array([[0, 0], [1, 1]], dtype=np.int64),
-        "updates_small": np.array([[True, False], [False, True]]),
+        "indices_small": np.array([[0, 1, 0]], dtype=np.int64),
+        "updates_small": np.array([[True, False, False]]),
     }
     results = dict(zip([o.name for o in outputs], ReferenceEvaluator(model).run(None, feed)))
     for reduction in REDUCTIONS:

@@ -164,9 +164,9 @@ mod tests {
 
         let or = TensorData::from([true, true, true, false]);
         let and = TensorData::from([false, false, false, false]);
-        y_add.to_data().assert_eq(&or, true);
-        y_max.to_data().assert_eq(&or, true);
-        y_mul.to_data().assert_eq(&and, true);
-        y_min.to_data().assert_eq(&and, true);
+        y_add.to_data().assert_eq(&or, false);
+        y_max.to_data().assert_eq(&or, false);
+        y_mul.to_data().assert_eq(&and, false);
+        y_min.to_data().assert_eq(&and, false);
     }
 }

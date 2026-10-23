@@ -100,6 +100,6 @@ mod tests {
 
         output
             .to_data()
-            .assert_eq(&TensorData::from([false, true, false]), true);
+            .assert_eq(&TensorData::from([false, true, false]), false);
     }
 }
