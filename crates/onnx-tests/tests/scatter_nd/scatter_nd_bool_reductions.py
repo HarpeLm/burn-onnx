@@ -11,8 +11,9 @@
 # used to generate model: scatter_nd_bool_reductions.onnx
 #
 # ScatterND on bool data with every reduction. On bool, add and max are a logical or, mul
-# and min a logical and (NumPy semantics). Index 1 is updated twice so the reduction
-# matters. Expected values from onnx.reference.ReferenceEvaluator, checked against a NumPy
+# and min a logical and (NumPy semantics). Each updated position differs from its update,
+# so or, and and assign all disagree; indices are unique because burn documents duplicate
+# targets as undefined for scatter_nd reductions, and index 3 is a true that stays untouched. Expected values from onnx.reference.ReferenceEvaluator, checked against a NumPy
 # loop and, for add/mul, ONNX Runtime (which rejects max/min on bool).
 
 import numpy as np
@@ -27,8 +28,8 @@ REDUCTIONS = ["add", "mul", "max", "min"]
 def main():
     inputs = [
         helper.make_tensor_value_info("data", TensorProto.BOOL, [4]),
-        helper.make_tensor_value_info("indices", TensorProto.INT64, [4, 1]),
-        helper.make_tensor_value_info("updates", TensorProto.BOOL, [4]),
+        helper.make_tensor_value_info("indices", TensorProto.INT64, [3, 1]),
+        helper.make_tensor_value_info("updates", TensorProto.BOOL, [3]),
     ]
     nodes = [
         helper.make_node("ScatterND", ["data", "indices", "updates"], [f"y_{r}"], reduction=r)
@@ -42,9 +43,9 @@ def main():
     onnx.save(model, "scatter_nd_bool_reductions.onnx")
 
     feed = {
-        "data": np.array([False, True, True, False]),
-        "indices": np.array([[1], [1], [2], [0]], dtype=np.int64),
-        "updates": np.array([False, True, False, True]),
+        "data": np.array([False, True, True, True]),
+        "indices": np.array([[0], [1], [2]], dtype=np.int64),
+        "updates": np.array([True, False, True]),
     }
     results = ReferenceEvaluator(model).run(None, feed)
     for reduction, result in zip(REDUCTIONS, results):

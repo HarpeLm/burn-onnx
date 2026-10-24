@@ -33,7 +33,9 @@ impl NodeCodegen for onnx_ir::scatter_nd::ScatterNDNode {
         let indices_rank = indices_tensor.rank;
 
         // On bool tensors burn's Add and Max are a logical or and Mul and Min a logical and,
-        // as in NumPy (and so in the ONNX reference).
+        // as in NumPy (and so in the ONNX reference). With repeated targets, the cubecl
+        // scatter_nd kernel does not reduce reliably for any dtype (burn documents duplicates
+        // as undefined): https://github.com/tracel-ai/burn/issues/6213
         let update_op = match self.config.reduction {
             ScatterNDReduction::None => quote! { burn::tensor::IndexingUpdateOp::Assign },
             ScatterNDReduction::Add => quote! { burn::tensor::IndexingUpdateOp::Add },

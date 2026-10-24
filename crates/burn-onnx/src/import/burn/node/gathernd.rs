@@ -71,10 +71,7 @@ impl NodeCodegen for onnx_ir::gathernd::GatherNDNode {
             }
         };
 
-        // gather_nd works on every tensor kind, bool included.
-        let gather_call = |indices_var: TokenStream| -> TokenStream {
-            quote! { #data.gather_nd(#indices_var) }
-        };
+        let gather = quote! { #data.gather_nd(aug_indices) };
 
         if output_arg.ty.is_scalar() {
             // Native gather_nd with output rank 0 would produce a rank-0 tensor,
@@ -88,8 +85,6 @@ impl NodeCodegen for onnx_ir::gathernd::GatherNDNode {
                 _ => unreachable!("is_scalar guard"),
             };
 
-            let gather = gather_call(quote! { aug_indices });
-
             quote! {
                 let #output = {
                     #normalize
@@ -102,7 +97,6 @@ impl NodeCodegen for onnx_ir::gathernd::GatherNDNode {
                 };
             }
         } else {
-            let gather = gather_call(quote! { aug_indices });
             quote! {
                 let #output = {
                     #normalize
@@ -123,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_gathernd_bool() {
-        // burn's gather_nd works on bool directly, without an int round trip
+        // Bool data is gathered directly
         let config = GatherNDConfig::new(0);
         let node = GatherNDNodeBuilder::new("gathernd1")
             .input_tensor("data", 2, DType::Bool(BoolStore::Native))

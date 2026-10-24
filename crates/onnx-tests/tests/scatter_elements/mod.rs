@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn scatter_elements_bool_reductions() {
         // Expected values from scatter_elements_bool_reductions.py (ONNX reference, checked
-        // against a NumPy loop and ONNX Runtime for add/mul). On bool, add/max are a logical
+        // against a NumPy loop and, for the full-shape add/mul outputs, ONNX Runtime). On bool, add/max are a logical
         // or and mul/min a logical and; the indices repeat targets so the reduction matters.
         let device = Default::default();
         let model = scatter_elements_bool_reductions::Model::from_file(
@@ -523,9 +523,10 @@ mod tests {
         let data = bools(TensorData::from([[false, true, false], [true, true, true]]));
         let indices = ints(TensorData::from([[0i64, 0, 2], [1, 1, 2]]));
         let updates = bools(TensorData::from([[true, true, false], [false, true, true]]));
-        // One row instead of two on the non-axis dimension: the ScatterND fallback
-        let indices_small = ints(TensorData::from([[0i64, 1, 0]]));
-        let updates_small = bools(TensorData::from([[true, false, false]]));
+        // One row instead of two on the non-axis dimension: the ScatterND fallback, with
+        // unique targets (burn documents duplicates as undefined for scatter_nd reductions)
+        let indices_small = ints(TensorData::from([[0i64, 1, 2]]));
+        let updates_small = bools(TensorData::from([[true, false, true]]));
 
         let (y_add, y_mul, y_max, y_min, y_small_add, y_small_mul) =
             model.forward(data, indices, updates, indices_small, updates_small);
@@ -538,7 +539,7 @@ mod tests {
         y_min.to_data().assert_eq(&and, false);
         // The fallback leaves row 1 untouched
         y_small_add.to_data().assert_eq(
-            &TensorData::from([[true, true, false], [true, true, true]]),
+            &TensorData::from([[true, true, true], [true, true, true]]),
             false,
         );
         y_small_mul.to_data().assert_eq(

@@ -140,30 +140,31 @@ mod tests {
     #[test]
     fn scatter_nd_bool_reductions() {
         // Expected values from scatter_nd_bool_reductions.py (ONNX reference, checked against
-        // a NumPy loop and ONNX Runtime for add/mul). Index 1 is updated twice so the reduction
-        // matters.
+        // a NumPy loop and ONNX Runtime for add/mul). Each updated position differs from its
+        // update, so or, and and assign all disagree. The indices are unique: burn documents
+        // duplicate targets as undefined for scatter_nd reductions. Index 3 is an untouched true.
         let device = Default::default();
         let model = scatter_nd_bool_reductions::Model::from_file(
             concat!(env!("OUT_DIR"), "/model/scatter_nd_bool_reductions.bpk"),
             &device,
         );
         let data = burn::tensor::Tensor::<1, burn::tensor::Bool>::from_bool(
-            TensorData::from([false, true, true, false]),
+            TensorData::from([false, true, true, true]),
             &device,
         );
         let indices = burn::tensor::Tensor::<2, burn::tensor::Int>::from_data(
-            TensorData::from([[1i64], [1], [2], [0]]),
+            TensorData::from([[0i64], [1], [2]]),
             &device,
         );
         let updates = burn::tensor::Tensor::<1, burn::tensor::Bool>::from_bool(
-            TensorData::from([false, true, false, true]),
+            TensorData::from([true, false, true]),
             &device,
         );
 
         let (y_add, y_mul, y_max, y_min) = model.forward(data, indices, updates);
 
-        let or = TensorData::from([true, true, true, false]);
-        let and = TensorData::from([false, false, false, false]);
+        let or = TensorData::from([true, true, true, true]);
+        let and = TensorData::from([false, false, true, true]);
         y_add.to_data().assert_eq(&or, false);
         y_max.to_data().assert_eq(&or, false);
         y_mul.to_data().assert_eq(&and, false);
